@@ -1,0 +1,145 @@
+# SPDX-FileCopyrightText: Copyright 2025 Siemens AG
+# SPDX-License-Identifier: Apache-2.0
+#
+# The original code is from the cmp-test-suite project:
+#   https://github.com/siemens/cmp-test-suite
+#  Code owner: Alexandr Railean
+# This code may be modified, or just copy pasted from the original.
+#
+
+name: Check code quality
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+concurrency:
+  group: check-code-quality-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Generate a docker image URL where all the characters are lower-case, for situations where an external contributor
+  # has a username that begins with a capital letter. This is a limitation of GHCR, which only allows lower-case
+  # characters. Subsequent jobs use this URL to pull the dev image that already contains all required tooling
+  # (ruff, reuse, codespell, pylint, pyright, uv, liboqs, ...).
+  prepare_env:
+    runs-on: ubuntu-24.04
+    outputs:
+      image_url: ${{ steps.setenv.outputs.image_url }}
+    steps:
+      - name: Set lowercase image name
+        id: setenv
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_url=ghcr.io/${OWNER_LC}/keyutils-dev:latest" >> $GITHUB_OUTPUT
+
+  # ---------- Stage 1 (fast checks) ----------
+  ruff_lint:
+    needs: prepare_env
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Ruff
+        run: ruff check
+
+  license_check:
+    needs: prepare_env
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: REUSE
+        run: reuse lint
+
+  spelling_check:
+    needs: prepare_env
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Codespell
+        run: >
+          codespell . --check-filenames
+          --skip '*.html,*.pem,*.xml,*venv*,./data/**'
+
+  dependency_check:
+    # See if newer versions of our Python dependencies are available. This does
+    # not enforce anything, and only has an informational character.
+    needs: prepare_env
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for outdated dependencies
+        run: |
+          echo "Checking for outdated packages..."
+          OUTDATED=$(uv tree --outdated --depth 1)
+          if echo "$OUTDATED" | grep -q 'latest:'; then
+            echo "Outdated packages detected, think about it:"
+            echo "$OUTDATED"
+            exit 1
+          else
+            echo "All packages are up to date!"
+            exit 0
+          fi
+
+  version_check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Ensure version is referenced in CHANGELOG.md
+        run: |
+          VERSION=$(awk -F'"' '/^version = / {print $2; exit}' pyproject.toml)
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from pyproject.toml."
+            exit 1
+          fi
+          if ! grep -E "^# ${VERSION}$" CHANGELOG.md; then
+            echo "Error: CHANGELOG.md does not contain an entry for version $VERSION."
+            exit 1
+          fi
+
+  # ---------- Stage 2 ----------
+  pylint:
+    needs: [prepare_env, ruff_lint, license_check, spelling_check]
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pylint
+        run: pylint --fail-under=9.4 keyutils_py
+
+  unit_test:
+    needs: [prepare_env, ruff_lint, license_check, spelling_check]
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    env:
+      OQS_INSTALL_PATH: "/root/_oqs"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+
+  type_check:
+    needs: prepare_env
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    container:
+      image: ${{ needs.prepare_env.outputs.image_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pyright
+        run: pyright

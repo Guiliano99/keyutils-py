@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright 2025 Siemens AG
+# SPDX-License-Identifier: Apache-2.0
+#
+# The original code is from the cmp-test-suite project:
+#   https://github.com/siemens/cmp-test-suite
+#  Code owner: Alexandr Railean
+# This code may be modified, or just copy pasted from the original.
+#
+
+# This is a base image that contains all the dependencies needed to build liboqs
+# and its Python wrapper, along with the various libraries the keyutils-py
+# project needs.
+# To experiment locally, build it with:
+# `docker build -t keyutils-base -f data/dockerfiles/Dockerfile.base .`
+
+FROM ubuntu:25.10
+
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip python3-venv openssl libssl-dev cmake git build-essential ca-certificates && \
+    apt-get clean
+
+# Use a dedicated virtual environment to avoid PEP 668 (externally-managed-environment)
+ENV VENV_PATH=/opt/venv
+RUN python3 -m venv "$VENV_PATH"
+ENV PATH="$VENV_PATH/bin:$PATH"
+
+WORKDIR /app
+COPY pyproject.toml .
+
+RUN pip3 install uv
+ENV UV_PROJECT_ENVIRONMENT="$VENV_PATH"
+RUN uv sync --extra pq
+
+RUN python3 -c "import oqs"  # Trigger the build of liboqs, by importing it
+
+# Remove unnecessary packages after we're done
+RUN apt-get remove -y cmake git build-essential && \
+    apt-get autoremove -y && \
+    apt-get clean
+
+# By default we just print some environment information, which might be useful
+# for troubleshooting.
+CMD ["sh", "-c", "uname -a && python3 --version && openssl version && pip3 freeze"]

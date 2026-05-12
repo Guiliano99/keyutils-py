@@ -1,0 +1,239 @@
+# SPDX-FileCopyrightText: Copyright 2025 Siemens AG
+# SPDX-License-Identifier: Apache-2.0
+#
+# The original code is from the cmp-test-suite project:
+#   https://github.com/siemens/cmp-test-suite
+#  Code owner: Alexandr Railean
+# This code may be modified, or just copy pasted from the original.
+#
+
+"""Factory for creating stateful post-quantum signature keys."""
+
+from typing import Dict, List, Optional, Type
+
+from pyasn1_alt_modules import rfc5280
+
+from keyutils_py import utils
+from keyutils_py.exceptions import InvalidKeyData, MismatchingKey
+from keyutils_py.factories.abstract_factory import AbstractKeyFactory
+from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey
+from keyutils_py.keys.stateful_sig_keys import (
+    HSSPrivateKey,
+    HSSPublicKey,
+    XMSSMTPrivateKey,
+    XMSSMTPublicKey,
+    XMSSPrivateKey,
+    XMSSPublicKey,
+)
+from keyutils_py.oids import PQ_STATEFUL_HASH_SIG_OID_2_NAME, may_return_oid_to_name
+from keyutils_py.types import PrivateKey
+from keyutils_py.utils import oqs
+
+
+class PQStatefulSigFactory(AbstractKeyFactory):
+    """Factory class for creating stateful PQ keys."""
+
+    _sig_prefix_2_priv_class: Dict[str, Type[PQHashStatefulSigPrivateKey]] = {
+        "xmss": XMSSPrivateKey,
+        "xmssmt": XMSSMTPrivateKey,
+        "hss": HSSPrivateKey,
+    }
+    _sig_prefix_2_pub_class: Dict[str, Type[PQHashStatefulSigPublicKey]] = {
+        "xmss": XMSSPublicKey,
+        "xmssmt": XMSSMTPublicKey,
+        "hss": HSSPublicKey,
+    }
+
+    @staticmethod
+    def generate_key_by_name(algorithm: str) -> PrivateKey:
+        """Generate a stateful PQ key based on the specified algorithm name."""
+        return PQStatefulSigFactory.generate_pq_stateful_key(algorithm)
+
+    @staticmethod
+    def get_supported_keys() -> List[str]:
+        """Return a list of supported stateful PQ keys."""
+        return ["xmss", "xmssmt", "hss"]
+
+    @staticmethod
+    def supported_algorithms() -> list:
+        """Return a list of supported stateful PQ algorithms."""
+        return (
+            PQStatefulSigFactory.get_algorithms_by_family()["xmss"]
+            + PQStatefulSigFactory.get_algorithms_by_family()["xmssmt"]
+            + PQStatefulSigFactory.get_algorithms_by_family()["hss"]
+        )
+
+    @classmethod
+    def get_algorithms_by_family(cls) -> Dict[str, List[str]]:
+        """Return a list of algorithms by family."""
+        algorithms = []
+        if oqs is not None and hasattr(oqs, "get_enabled_stateful_sig_mechanisms"):
+            algorithms = oqs.get_enabled_stateful_sig_mechanisms()
+            algorithms = [x.lower() for x in algorithms]
+
+        return {
+            "xmss": cls._get_alg_family(algorithms, "xmss-"),
+            "xmssmt": cls._get_alg_family(algorithms, "xmssmt-"),
+            "hss": HSSPrivateKey.supported_algorithms(),
+        }
+
+    @staticmethod
+    def generate_pq_stateful_key(algorithm: str, **kwargs) -> PQHashStatefulSigPrivateKey:
+        """Generate a stateful PQ object based on the specified type.
+
+        :param algorithm: The algorithm to use for the PQ.
+        :return: An instance of the specified PQ type.
+        """
+        prefix = PQStatefulSigFactory._get_matching_prefix(algorithm, PQStatefulSigFactory.get_supported_keys())
+        normalized_algorithm = algorithm
+        params = dict(kwargs)
+        if prefix == "hss":
+            normalized_algorithm = HSSPrivateKey.normalize_algorithm(algorithm)
+        algorithms = PQStatefulSigFactory.supported_algorithms() + [prefix]
+        if normalized_algorithm not in algorithms:
+            msg = (
+                f"Unsupported {prefix.upper()} algorithm: {algorithm}. "
+                f"Supported algorithms are: {PQStatefulSigFactory.get_algorithms_by_family()[prefix]}"
+            )
+            raise ValueError(msg)
+
+        private_key_type = PQStatefulSigFactory._sig_prefix_2_priv_class[prefix]
+        if prefix == "hss":
+            length_value = params.get("levels") or 1
+            length_arg = int(length_value)
+            return private_key_type(normalized_algorithm, levels=length_arg)  # type: ignore
+        return private_key_type(algorithm)
+
+    @staticmethod
+    def load_public_key_from_spki(spki: rfc5280.SubjectPublicKeyInfo) -> PQHashStatefulSigPublicKey:
+        """Load a public key from a SubjectPublicKeyInfo object.
+
+        :param spki: The SubjectPublicKeyInfo object containing the public key.
+        :return: An instance of the corresponding stateful signature public key class.
+        """
+        oid = spki["algorithm"]["algorithm"]
+        public_key_bytes = spki["subjectPublicKey"].asOctets()
+        algorithm = PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid]
+
+        alg_id = spki["algorithm"]
+        if alg_id["parameters"].isValue:
+            raise InvalidKeyData(f"The `parameters` field in the SPKI is not allowed to be set for: {algorithm}")
+
+        prefix = PQStatefulSigFactory._get_matching_prefix(algorithm, PQStatefulSigFactory.get_supported_keys())
+
+        if prefix in PQStatefulSigFactory._sig_prefix_2_pub_class:
+            pub_class = PQStatefulSigFactory._sig_prefix_2_pub_class[prefix]
+            return pub_class.from_public_bytes(public_key_bytes)
+
+        raise NotImplementedError(f"Unsupported PQ STFL algorithm in SPKI: {algorithm}")
+
+    @staticmethod
+    def _validate_public_key(
+        algorithm: str,
+        private_key: PQHashStatefulSigPrivateKey,
+        public_key_bytes: bytes,
+    ) -> None:
+        """Validate that the public key matches the private key.
+
+        :param private_key: The private key to validate against.
+        :param public_key_bytes: The raw bytes of the public key.
+        :raises InvalidKeyData: If the public key is invalid.
+        :raises MismatchingKey: If the public key does not match the private key.
+        """
+        try:
+            public_key = private_key.public_key().from_public_bytes(public_key_bytes)
+        except (InvalidKeyData, KeyError) as e:
+            raise InvalidKeyData(
+                f"The PQ stateful signature inside the OneAsymmetricKey is invalid: {algorithm}."
+            ) from e
+
+        if public_key != private_key.public_key():
+            if public_key.name != private_key.name:
+                msg = (
+                    f"The PQ stateful signature public key name does not match the "
+                    f"private key name in OneAsymmetricKey type."
+                    f"Got: {public_key.name} + expected: {private_key.name}"
+                )
+                raise MismatchingKey(msg)
+
+            msg = (
+                f"The PQ stateful signature public key does not match the "
+                f"private key in OneAsymmetricKey type: {algorithm}."
+            )
+            raise MismatchingKey(msg)
+
+    @classmethod
+    def _get_matching_prefix(cls, name: str, prefixes: List[str]) -> str:
+        """Get the matching prefix for a given name from a list of prefixes.
+
+        :param name: The name to match against the prefixes.
+        :param prefixes: A list of prefixes to check against.
+        :return: The matching prefix.
+        :raises ValueError: If no matching prefix is found.
+        """
+        if name in prefixes:
+            return name
+
+        for prefix in prefixes:
+            if name.startswith(prefix + "-") or name.startswith(prefix + "_"):
+                return prefix
+        raise ValueError(f"No matching prefix found for: {name}. Supported prefixes are: {prefixes}")
+
+    @staticmethod
+    def validate_alg_id(
+        alg_id: rfc5280.AlgorithmIdentifier,
+    ) -> None:
+        """Validate the AlgorithmIdentifier for a stateful PQ signature.
+
+        :param alg_id: The AlgorithmIdentifier to validate.
+        :raises InvalidKeyData: If the AlgorithmIdentifier is invalid.
+        """
+        if alg_id["algorithm"] not in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
+            _name = may_return_oid_to_name(alg_id["algorithm"])
+            raise InvalidKeyData(f"Unsupported PQ stateful signature algorithm {_name}:{alg_id['algorithm']}. ")
+        name = PQ_STATEFUL_HASH_SIG_OID_2_NAME[alg_id["algorithm"]]
+        if alg_id["parameters"].isValue:
+            raise InvalidKeyData(
+                f"The `parameters` field in the AlgorithmIdentifier is not allowed to be set for: {name}"
+            )
+
+    @classmethod
+    def _load_private_key_from_pkcs8(
+        cls,
+        alg_id: rfc5280.AlgorithmIdentifier,
+        private_key_bytes: bytes,
+        public_key_bytes: Optional[bytes] = None,
+    ) -> PQHashStatefulSigPrivateKey:
+        """Load a private key from raw PKCS#8 bytes.
+
+        :param alg_id: The AlgorithmIdentifier containing the algorithm OID.
+        :param private_key_bytes: The raw bytes of the private key.
+        :param public_key_bytes: Optional raw bytes of the public key.
+        """
+        alg_name = PQ_STATEFUL_HASH_SIG_OID_2_NAME[alg_id["algorithm"]]
+        prefix = cls._get_matching_prefix(alg_name, cls.get_supported_keys())
+
+        if prefix not in cls._sig_prefix_2_priv_class:
+            raise NotImplementedError(f"Unsupported PQ STFL algorithm in PKCS#8: {alg_name}")
+
+        private_key_class = cls._sig_prefix_2_priv_class[prefix]
+        private_key = private_key_class.from_private_bytes(private_key_bytes)
+        if public_key_bytes is None:
+            return private_key
+
+        cls._validate_public_key(
+            alg_name,
+            private_key,
+            public_key_bytes,
+        )
+        return private_key
+
+    @staticmethod
+    def _prepare_invalid_private_key(
+        private_key: PrivateKey,
+    ) -> bytes:
+        """Prepare an invalid private key for testing purposes."""
+        assert isinstance(private_key, PQHashStatefulSigPrivateKey)
+        private_key_bytes = private_key.private_bytes_raw()
+        private_key_bytes = utils.manipulate_first_byte(private_key_bytes)
+        return private_key_bytes

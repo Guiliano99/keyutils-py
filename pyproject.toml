@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright 2025 Siemens AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keyutils-py"
+version = "0.0.1"
+description = "Standalone PQ stateful-hash key library (HSS / LMS / XMSS / XMSSMT)."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "", email = "contact@example.com" }
+]
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    "cryptography>=48.0.0,<49.0.0",
+    "pyasn1>=0.6.3,<0.7.0",
+    "pyasn1-alt-modules>=0.4.10,<0.5.0",
+    "pyhsslms==2.0.0",
+    # Used by the python FrodoKEM implementation.
+    "bitstring==4.4.0",
+    # Used by compute_ecdh's cofactor-multiplication path.
+    "tinyec==0.4.0",
+    # Required for RSASSA-PSS-SHAKE128/256 (cryptography has no SHAKE-as-hash)
+    # and the FixedSHAKE wrappers in data_objects.py.
+    "pycryptodome>=3.23.0,<4.0.0",
+]
+
+[project.optional-dependencies]
+# liboqs lives behind an extra because it pulls system deps (libssl-dev, cmake).
+pq = [
+    "liboqs-python @ git+https://github.com/Guiliano99/liboqs-python-stateful-sig.git",
+]
+dev = [
+    "safety==3.7.0",
+    "pylint[spelling]==4.0.5",
+    "reuse==6.2.0",
+    "ruff==0.15.12",
+    "pyupgrade==3.21.2",
+    "pyright[nodejs]==1.1.409",
+    "codespell==2.4.2",
+    "pre-commit==4.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["keyutils_py", "keyutils_py.*"]
+exclude = ["tests", "tests.*"]
+
+[tool.setuptools.package-data]
+"keyutils_py.data" = ["keys/**/*.pem"]
+
+[tool.ty.src]
+include = ["keyutils_py", "scripts"]
+exclude = ["tests/"]
+
+[tool.codespell]
+# Patterns are fnmatch-style and matched against the full path codespell visits.
+# `*name*` form matches whether codespell is invoked from this directory
+# (paths prefixed with `./`), from a parent, or with the dir as an explicit arg.
+skip = "*keyutils_py/data*,*keyutils_py/fips*,*.pem,*.venv*,*uv.lock,*.egg-info,*.ruff_cache,*.git"
+# `sHat`, `thi` etc. are short mathematical variable identifiers from the FIPS
+# reference implementations and may appear in documentation citing them.
+ignore-words-list = "PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi"
+
+[tool.pylint.main]
+ignore = ["tests"]
+
+[tool.pylint.format]
+max-line-length = 120

@@ -1,0 +1,27 @@
+version = 1
+SPDX-PackageName = "default-package"
+SPDX-PackageDownloadLocation = "UNKNOWN"
+
+[[annotations]]
+path = ["CHANGELOG.md", "README.md", "LICENSE", "scripts/**", ".github/skills/**", "pyrightconfig.json"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright 2025 Siemens AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["keyutils_py/data/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright 2025 Siemens AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["uv.lock"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright 2025 Siemens AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["keyutils_py/fips/frodokem.py"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright Douglas Stebila"
+SPDX-License-Identifier = "CC0-1.0"

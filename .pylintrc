@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pylint is run against keyutils_py/ only.
+# keyutils_py/fips/* is excluded because it is used "as is" from the original
+# repo (https://github.com/mjosaarinen/py-acvp-pqc) and intentionally kept
+# unmodified.
+
+[MAIN]
+# Recurse into sub-packages.
+recursive=yes
+
+# Paths to ignore (regex patterns matched against the full path).
+# Excludes the bundled FIPS reference implementation and test code.
+ignore-paths=
+    ^keyutils_py/fips/.*$,
+    ^tests/.*$
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# Disable noisy checks that conflict with the project's style.
+disable=
+    C0114,  # missing-module-docstring (modules without top-level docstring)
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    R0903,  # too-few-public-methods
+    W0511,  # fixme / TODO comments
+
+[DESIGN]
+# Keep thresholds liberal enough to avoid false positives on crypto code.
+max-args=10
+max-attributes=15
+max-bool-expr=6
+max-branches=15
+max-locals=20
+max-returns=8
+max-statements=60
+
+[SIMILARITIES]
+# Minimum lines of code to consider as a similarity.
+min-similarity-lines=10
+ignore-imports=yes

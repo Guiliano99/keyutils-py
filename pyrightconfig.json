@@ -1,0 +1,11 @@
+{
+  "include": ["./keyutils_py"],
+  "exclude": [
+    "./unit_tests",
+    "./tests",
+    "./github",
+    ".pre-commit-cache/",
+    "./keyutils_py/fips/*.py",
+    "./keyutils_py/keys/*.py"
+  ]
+}
