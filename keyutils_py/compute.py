@@ -25,13 +25,13 @@ Top-level entry points:
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union, get_args
 
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, x448, x25519
+from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, padding, rsa, x448, x25519
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc4055, rfc8017, rfc9480, rfc9481
 
@@ -40,6 +40,7 @@ from keyutils_py.exceptions import (
     BadAlg,
     BadAsn1Data,
     BadDataFormat,
+    BadSigAlgID,
     BadSigAlgIDParams,
     InvalidKeyCombination,
 )
@@ -66,9 +67,11 @@ from keyutils_py.keys.trad_kem_keys import DHKEMPublicKey, RSADecapKey, RSAEncap
 from keyutils_py.oids import (
     COMPOSITE_SIG_OID_TO_NAME,
     CURVE_2_COFACTORS,
+    ECDSA_OID_2_NAME,
     PQ_SIG_OID_2_NAME,
     PQ_SIG_PRE_HASH_OID_2_NAME,
     PQ_STATEFUL_HASH_SIG_OID_2_NAME,
+    RSA_OID_2_NAME,
     RSASSA_PSS_OID_2_NAME,
     SIG_ALG_OID_2_PARAMETERS_SPEC,
     TRAD_SIG_OID_2_NAME,
@@ -76,7 +79,7 @@ from keyutils_py.oids import (
     hash_name_to_instance,
     may_return_oid_to_name,
 )
-from keyutils_py.types import ECDHPrivateKey, ECDHPublicKey
+from keyutils_py.types import ECDHPrivateKey, ECDHPublicKey, SignKey, VerifyKey
 from keyutils_py.utils import (
     NOT_IMPLEMENTED_HINT,
     encode_to_der,
@@ -282,16 +285,28 @@ def verify_rsassa_pss_shake(
 # ---------------------------------------------------------------------------
 
 
-def sign_data(data: bytes, key, **kwargs) -> bytes:
+def sign_data(data: bytes, key: SignKey, **kwargs) -> bytes:
     """Sign ``data`` with a signature private key.
 
-    Stateful-hash keys take only the message bytes. PQ signatures
-    (ML-DSA / SLH-DSA / Falcon) honour ``hash_alg`` and ``ctx`` kwargs.
-    Composite-sig keys delegate to :meth:`CompositeSigPrivateKey.sign`.
+    Dispatches on the type of ``key``:
 
-    For an :class:`rsa.RSAPrivateKey`, set ``use_rsa_pss=True`` to use
-    RSASSA-PSS padding (with optional ``hash_alg``, ``salt_length``,
-    ``second_hash_alg``).
+    * Stateful-hash keys (HSS / XMSS / XMSSMT) sign the message bytes directly.
+    * PQ signatures (ML-DSA / SLH-DSA / Falcon) honour the ``hash_alg`` and
+      ``ctx`` keyword arguments.
+    * Composite-sig (hybrid) keys delegate to :meth:`CompositeSigPrivateKey.sign`.
+    * :class:`rsa.RSAPrivateKey` with ``use_rsa_pss=True`` uses RSASSA-PSS padding
+      (``hash_alg``, ``salt_length`` and ``second_hash_alg`` are forwarded).
+    * :class:`ec.EllipticCurvePrivateKey` produces an ECDSA signature; the digest
+      defaults to ``sha256`` and may be overridden via ``hash_alg``.
+    * Ed25519 / Ed448 keys sign the message directly (no ``hash_alg``).
+    * :class:`dsa.DSAPrivateKey` produces a DSA signature; the digest defaults to
+      ``sha256`` and may be overridden via ``hash_alg``.
+
+    :param data: The message bytes to sign.
+    :param key: The signature private key selecting the algorithm.
+    :param kwargs: Algorithm-specific options: ``hash_alg``, ``ctx``,
+        ``use_rsa_pss``, ``salt_length`` and ``second_hash_alg``.
+    :raises NotImplementedError: If ``key`` is not a supported signature key type.
     """
     if isinstance(key, PQHashStatefulSigPrivateKey):
         require_oqs_if_needed(key.name)
@@ -311,13 +326,35 @@ def sign_data(data: bytes, key, **kwargs) -> bytes:
             salt_length=kwargs.get("salt_length"),
             second_hash_alg=kwargs.get("second_hash_alg"),
         )
+    if isinstance(key, ec.EllipticCurvePrivateKey):
+        hash_alg = kwargs.get("hash_alg") or "sha256"
+        return key.sign(data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+    if isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
+        return key.sign(data)
+    if isinstance(key, dsa.DSAPrivateKey):
+        hash_alg = kwargs.get("hash_alg") or "sha256"
+        return key.sign(data, hash_name_to_instance(hash_alg))
     raise NotImplementedError(f"{type(key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
 
-def verify_signature(public_key, signature: bytes, data: bytes, **kwargs) -> None:
+def verify_signature(public_key: VerifyKey, signature: bytes, data: bytes, **kwargs) -> None:
     """Verify ``signature`` over ``data`` with a signature public key.
 
-    :raises cryptography.exceptions.InvalidSignature: on signature mismatch.
+    The verification counterpart of :func:`sign_data`, dispatching on the type
+    of ``public_key``:
+
+    * PQ signatures honour the ``hash_alg``, ``ctx`` and ``use_pre_hash`` options.
+    * :class:`ec.EllipticCurvePublicKey` verifies an ECDSA signature; the digest
+      defaults to ``sha256`` and may be overridden via ``hash_alg``.
+    * Ed25519 / Ed448 keys verify the message directly.
+
+    :param public_key: The signature public key selecting the algorithm.
+    :param signature: The signature bytes to check.
+    :param data: The message bytes the signature is over.
+    :param kwargs: Algorithm-specific options: ``hash_alg``, ``ctx`` and
+        ``use_pre_hash``.
+    :raises cryptography.exceptions.InvalidSignature: If the signature does not verify.
+    :raises NotImplementedError: If ``public_key`` is not a supported signature key type.
     """
     if isinstance(public_key, PQHashStatefulSigPublicKey):
         require_oqs_if_needed(public_key.name)
@@ -336,6 +373,13 @@ def verify_signature(public_key, signature: bytes, data: bytes, **kwargs) -> Non
             is_prehashed=kwargs.get("use_pre_hash", False),
             ctx=kwargs.get("ctx", b""),
         )
+        return
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        hash_alg = kwargs.get("hash_alg") or "sha256"
+        public_key.verify(signature, data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+        return
+    if isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+        public_key.verify(signature, data)
         return
     raise NotImplementedError(f"{type(public_key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
@@ -362,20 +406,55 @@ def _resolve_sig_alg_name(alg_id: rfc9480.AlgorithmIdentifier) -> str:
     raise BadAlg(f"Unsupported signature AlgorithmIdentifier: {may_return_oid_to_name(oid)}.")
 
 
-_AllSigPriv = (PQSignaturePrivateKey, PQHashStatefulSigPrivateKey, HybridSigPrivateKey, rsa.RSAPrivateKey)
-_AllSigPub = (PQSignaturePublicKey, PQHashStatefulSigPublicKey, HybridSigPublicKey, rsa.RSAPublicKey)
+def _check_eddsa_oid_matches_key(oid: univ.ObjectIdentifier, key: Any) -> None:
+    """Ensure an EdDSA ``alg_id`` OID matches the specific Ed key variant.
+
+    :raises BadSigAlgID: if the OID is not the exact Ed25519/Ed448 OID for ``key``.
+    """
+    is_ed25519 = isinstance(key, (ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey))
+    expected = rfc9481.id_Ed25519 if is_ed25519 else rfc9481.id_Ed448
+    if oid != expected:
+        raise BadSigAlgID(
+            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the "
+            f"{type(key).__name__} EdDSA key."
+        )
 
 
-def sign_with_alg_id(key, alg_id: rfc9480.AlgorithmIdentifier, data: bytes) -> bytes:
-    """Sign ``data`` with the algorithm identifier ``alg_id``."""
+# Runtime ``isinstance`` tuples derived from the SignKey / VerifyKey unions, so the
+# accepted key types stay a single source of truth (see ``keyutils_py.types``).
+_AllSigPriv = get_args(SignKey)
+_AllSigPub = get_args(VerifyKey)
+
+
+def sign_with_alg_id(key: SignKey, alg_id: rfc9480.AlgorithmIdentifier, data: bytes) -> bytes:
+    """Sign ``data`` using the algorithm described by ``alg_id``.
+
+    The OID in ``alg_id`` is validated and matched against ``key``: each key
+    family (RSA-PKCS#1-v1.5, RSASSA-PSS, ECDSA, EdDSA, PQ, stateful-hash and
+    composite) only accepts an algorithm identifier from its own family, so a key
+    paired with a foreign OID is rejected rather than silently mis-signed. DSA
+    keys are rejected: DSA signing is only available through :func:`sign_data`.
+
+    :param key: The signature private key. Must match the ``alg_id`` family.
+    :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm
+        (and, for RSASSA-PSS, carrying its parameters).
+    :param data: The message bytes to sign.
+    :raises BadAlg: If the OID is not a supported signature OID, or ``key`` is a
+        DSA key (DSA is not supported here).
+    :raises BadSigAlgID: If ``key`` does not match the algorithm identifier
+        (including a RSASSA-PSS ``alg_id`` paired with a non-RSA key).
+    :raises BadSigAlgIDParams: If the ``alg_id`` parameters are invalid for the OID.
+    """
     name = _resolve_sig_alg_name(alg_id)
     if not isinstance(key, _AllSigPriv):
         raise BadAlg(f"Key is not a signature private key (got {type(key).__name__}).")
+    if isinstance(key, dsa.DSAPrivateKey):
+        raise BadAlg("DSA algorithm is not supported.")
 
     oid = alg_id["algorithm"]
     if oid in RSASSA_PSS_OID_2_NAME:
         if not isinstance(key, rsa.RSAPrivateKey):
-            raise BadAlg(f"RSASSA-PSS alg_id requires an RSA private key (got {type(key).__name__}).")
+            raise BadSigAlgID(f"RSASSA-PSS alg_id requires an RSA private key (got {type(key).__name__}).")
         if oid == rfc9481.id_RSASSA_PSS_SHAKE128:
             return sign_data_rsa_pss(key, data, hash_alg="shake128")
         if oid == rfc9481.id_RSASSA_PSS_SHAKE256:
@@ -392,31 +471,65 @@ def sign_with_alg_id(key, alg_id: rfc9480.AlgorithmIdentifier, data: bytes) -> b
     if isinstance(key, HybridSigPrivateKey):
         return key.sign(data)
     if isinstance(key, rsa.RSAPrivateKey):
-        hash_alg = TRAD_SIG_OID_2_NAME[oid].split("-", 1)[1]
+        if oid not in RSA_OID_2_NAME:
+            raise BadSigAlgID(
+                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an RSA PKCS#1 v1.5 "
+                "signature OID, but the key is an RSA private key."
+            )
+        hash_alg = RSA_OID_2_NAME[oid].split("-", 1)[1]
         return key.sign(
             data=data,
             padding=padding.PKCS1v15(),
             algorithm=hash_name_to_instance(hash_alg),
         )
+    if isinstance(key, ec.EllipticCurvePrivateKey):
+        if oid not in ECDSA_OID_2_NAME:
+            raise BadSigAlgID(
+                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an ECDSA "
+                "signature OID, but the key is an EC private key."
+            )
+        hash_alg = ECDSA_OID_2_NAME[oid].split("-", 1)[1]
+        return key.sign(data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+    if isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
+        _check_eddsa_oid_matches_key(oid, key)
+        return key.sign(data)
     require_oqs_if_needed(name)
     return key.sign(data)
 
 
 def verify_signature_with_alg_id(
-    public_key,
+    public_key: VerifyKey,
     alg_id: rfc9480.AlgorithmIdentifier,
     data: bytes,
     signature: bytes,
 ) -> None:
-    """Verify ``signature`` over ``data`` against ``alg_id``."""
+    """Verify ``signature`` over ``data`` using the algorithm described by ``alg_id``.
+
+    The verification counterpart of :func:`sign_with_alg_id`: the OID in
+    ``alg_id`` is validated and must belong to the same family as ``public_key``.
+    RSA-SHA1 (``sha1WithRSAEncryption``) and DSA keys are rejected.
+
+    :param public_key: The signature public key. Must match the ``alg_id`` family.
+    :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm.
+    :param data: The message bytes the signature is over.
+    :param signature: The signature bytes to check.
+    :raises BadAlg: If the OID is not a supported signature OID, the OID is
+        RSA-SHA1, or ``public_key`` is a DSA key (DSA is not supported here).
+    :raises BadSigAlgID: If ``public_key`` does not match the algorithm identifier
+        (including a RSASSA-PSS ``alg_id`` paired with a non-RSA key).
+    :raises BadSigAlgIDParams: If the ``alg_id`` parameters are invalid for the OID.
+    :raises cryptography.exceptions.InvalidSignature: If the signature does not verify.
+    """
     name = _resolve_sig_alg_name(alg_id)
     if not isinstance(public_key, _AllSigPub):
         raise BadAlg(f"Public key is not a signature public key (got {type(public_key).__name__}).")
+    if isinstance(public_key, dsa.DSAPublicKey):
+        raise BadAlg("DSA algorithm is not supported.")
 
     oid = alg_id["algorithm"]
     if oid in RSASSA_PSS_OID_2_NAME:
         if not isinstance(public_key, rsa.RSAPublicKey):
-            raise BadAlg(f"RSASSA-PSS alg_id requires an RSA public key (got {type(public_key).__name__}).")
+            raise BadSigAlgID(f"RSASSA-PSS alg_id requires an RSA public key (got {type(public_key).__name__}).")
         verify_rsassa_pss_from_alg_id(public_key, data, signature, alg_id)
         return
 
@@ -424,7 +537,14 @@ def verify_signature_with_alg_id(
         public_key.verify(signature=signature, data=data)
         return
     if isinstance(public_key, rsa.RSAPublicKey):
-        hash_alg = TRAD_SIG_OID_2_NAME[oid].split("-", 1)[1]
+        if oid not in RSA_OID_2_NAME:
+            raise BadSigAlgID(
+                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an RSA PKCS#1 v1.5 "
+                "signature OID, but the key is an RSA public key."
+            )
+        if oid == rfc8017.sha1WithRSAEncryption:
+            raise BadAlg("RSA-SHA1 signatures are not accepted for verification.")
+        hash_alg = RSA_OID_2_NAME[oid].split("-", 1)[1]
         public_key.verify(
             signature=signature,
             data=data,
@@ -432,10 +552,24 @@ def verify_signature_with_alg_id(
             algorithm=hash_name_to_instance(hash_alg),
         )
         return
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        if oid not in ECDSA_OID_2_NAME:
+            raise BadSigAlgID(
+                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an ECDSA "
+                "signature OID, but the key is an EC public key."
+            )
+        hash_alg = ECDSA_OID_2_NAME[oid].split("-", 1)[1]
+        public_key.verify(signature, data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+        return
+    if isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+        _check_eddsa_oid_matches_key(oid, public_key)
+        public_key.verify(signature, data)
+        return
     require_oqs_if_needed(name)
     if isinstance(public_key, PQHashStatefulSigPublicKey):
         public_key.verify(data=data, signature=signature)
         return
+    # Only PQSignaturePublicKey remains (DSA rejected above; RSA/EC/Ed/hybrid handled).
     public_key.verify(signature=signature, data=data)
 
 

@@ -87,6 +87,7 @@ from keyutils_py.oids import (
     RSASSA_PSS_OID_2_NAME,
     SIG_ALG_OID_2_PARAMETERS_SPEC,
     SLH_DSA_NAME_2_OID,
+    TRAD_SIG_NAME_2_OID,
     get_curve_instance,
     hash_name_to_instance,
     id_rsa_kem_spki,
@@ -212,6 +213,40 @@ def prepare_rsa_pss_alg_id(
     params["saltLength"] = salt_length if salt_length is not None else hash_inst.digest_size
 
     return prepare_alg_id(rfc9481.id_RSASSA_PSS, value=params)
+
+
+def prepare_sig_alg_id(
+    key: Union[PrivateKey, PublicKey],
+    hash_alg: str = "sha256",
+    use_rsa_pss: bool = False,
+) -> rfc5280.AlgorithmIdentifier:
+    """Build the signature ``AlgorithmIdentifier`` for a traditional signing/verifying key.
+
+    Maps a key plus a digest to the matching signature OID (e.g. a DSA key with
+    ``sha256`` to ``id-dsa-with-sha256``; an EC key with ``sha384`` to
+    ``ecdsa-with-SHA384``). EdDSA keys ignore ``hash_alg`` (Ed25519 / Ed448 carry
+    no separate digest); RSA keys yield a PKCS#1 v1.5 identifier (NULL parameters)
+    unless ``use_rsa_pss`` selects RSASSA-PSS.
+
+    :param key: The signature key, private or public.
+    :param hash_alg: The digest name (e.g. ``sha256``); ignored for EdDSA keys.
+    :param use_rsa_pss: For an RSA key, build a RSASSA-PSS identifier instead of
+        PKCS#1 v1.5.
+    :raises BadAlg: If the key type / hash combination has no known signature OID.
+    """
+    name = get_key_name(key)
+    if name in ("ed25519", "ed448"):
+        return prepare_alg_id(TRAD_SIG_NAME_2_OID[name])
+    if name == "rsa" and use_rsa_pss:
+        return prepare_rsa_pss_alg_id(hash_alg)
+    oid = TRAD_SIG_NAME_2_OID.get(f"{name}-{hash_alg}")
+    if oid is None:
+        raise BadAlg(f"No signature AlgorithmIdentifier for a {name!r} key with hash {hash_alg!r}.")
+    if name == "rsa":
+        # RSA PKCS#1 v1.5 carries NULL parameters (RFC 4055 / RFC 8017).
+        return prepare_alg_id(oid, value=univ.Null(""))
+    # ECDSA / DSA — parameters absent (RFC 5758).
+    return prepare_alg_id(oid)
 
 
 def decode_alg_id_parameters(alg_id: rfc5280.AlgorithmIdentifier) -> rfc5280.AlgorithmIdentifier:
@@ -928,6 +963,7 @@ __all__ = [
     "prepare_hash_alg_id",
     "prepare_mgf1_alg_id",
     "prepare_rsa_pss_alg_id",
+    "prepare_sig_alg_id",
     "decode_alg_id_parameters",
     # Negative-test helpers
     "manipulate_sig_based_on_key",

@@ -220,6 +220,7 @@ def get_random_bytes(length: int = 16) -> bytes:
 
 __all__ = [
     "decode_pem_string",
+    "manipulate_first_byte",
     "load_and_decode_pem_file",
     "encode_to_der",
     "try_decode_pyasn1",

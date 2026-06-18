@@ -20,7 +20,7 @@ from typing import Dict, Optional, Union
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc4055, rfc5990, rfc8017, rfc9480, rfc9481, rfc9688, rfc9708
+from pyasn1_alt_modules import rfc4055, rfc5480, rfc5990, rfc8017, rfc9480, rfc9481, rfc9688, rfc9708
 
 from keyutils_py.enums import SigAlgParametersSpec
 
@@ -516,11 +516,20 @@ ED_OID_2_NAME = {
     rfc9481.id_Ed448: "ed448",
 }
 
+# DSA — only id-dsa-with-sha256 is recognised. Signing is rejected at the
+# dispatch boundary (see keyutils_py.compute.sign_with_alg_id); the OID is
+# registered so it resolves to a clear "not supported" error rather than a
+# generic "unknown OID" one.
+DSA_OID_2_NAME = {
+    rfc5480.id_dsa_with_sha256: "dsa-sha256",
+}
+
 TRAD_SIG_OID_2_NAME: Dict[univ.ObjectIdentifier, str] = {}
 TRAD_SIG_OID_2_NAME.update(ED_OID_2_NAME)
 TRAD_SIG_OID_2_NAME.update(RSA_OID_2_NAME)
 TRAD_SIG_OID_2_NAME.update(RSASSA_PSS_OID_2_NAME)
 TRAD_SIG_OID_2_NAME.update(ECDSA_OID_2_NAME)
+TRAD_SIG_OID_2_NAME.update(DSA_OID_2_NAME)
 
 TRAD_SIG_NAME_2_OID = {v: k for k, v in TRAD_SIG_OID_2_NAME.items()}
 
@@ -694,10 +703,12 @@ _SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS] = SigAlgParametersSpec.MUS
 _SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS_SHAKE128] = SigAlgParametersSpec.MUST_BE_ABSENT
 _SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS_SHAKE256] = SigAlgParametersSpec.MUST_BE_ABSENT
 
-# ECDSA + EdDSA — parameters absent.
+# ECDSA + EdDSA + DSA — parameters absent.
 for _oid in ECDSA_OID_2_NAME:
     _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
 for _oid in ED_OID_2_NAME:
+    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
+for _oid in DSA_OID_2_NAME:
     _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
 
 # PQ signatures (ML-DSA, SLH-DSA, Falcon, with and without pre-hash) — absent.

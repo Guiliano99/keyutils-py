@@ -14,9 +14,10 @@ import os
 import tempfile
 import textwrap
 import unittest
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from pyasn1.codec.der import encoder
-from pyasn1_alt_modules import rfc5280, rfc9480
+from pyasn1_alt_modules import rfc5280, rfc9480, rfc9481
 
 from keyutils_py import utils as _oqs_guard
 from keyutils_py.exceptions import MissingOQSDependencyError
@@ -68,6 +69,17 @@ class TestMainAPI(unittest.TestCase):
         msg = b"alg-id round trip"
         sig = sign_with_alg_id(key, alg_id, msg)
         verify_signature_with_alg_id(key.public_key(), alg_id, msg, sig)
+
+    def test_alg_id_round_trip_ecdsa(self):
+        """GIVEN an EC P-256 key / WHEN sign_with_alg_id→verify_signature_with_alg_id / THEN succeeds."""
+        key = ec.generate_private_key(ec.SECP256R1())
+        alg_id = rfc9480.AlgorithmIdentifier()
+        alg_id["algorithm"] = rfc9481.ecdsa_with_SHA256  # ECDSA params MUST be absent (RFC 5758 §3.2)
+        msg = b"ecdsa alg-id round trip"
+        sig = sign_with_alg_id(key, alg_id, msg)
+        verify_signature_with_alg_id(key.public_key(), alg_id, msg, sig)
+        # keyutils-py emits DER ECDSA signatures; cryptography must accept them too.
+        key.public_key().verify(sig, msg, ec.ECDSA(hashes.SHA256()))
 
     def test_save_and_load_round_trip_hss(self):
         """GIVEN HSS / WHEN save_key→load_private_key_from_file→load_public_key_from_file / THEN matches."""
