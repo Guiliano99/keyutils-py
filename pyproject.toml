@@ -40,9 +40,9 @@ dev = [
     "safety==3.8.1",
     "pylint[spelling]==4.0.6",
     "reuse[charset-normalizer]==6.2.0",
-    "ruff==0.15.18",
+    "ruff==0.15.20",
     "pyupgrade==3.21.2",
-    "pyright[nodejs]==1.1.410",
+    "pyright[nodejs]==1.1.411",
     "codespell==2.4.2",
     "pre-commit==4.6.0",
 ]
