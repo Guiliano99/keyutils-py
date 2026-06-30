@@ -95,6 +95,10 @@ class MismatchingKey(InvalidKeyData):
     """Raised when a loaded public key does not match the private key."""
 
 
+class InvalidJWK(InvalidKeyData):
+    """Raised when a JWK is malformed or a key cannot be represented as a JWK."""
+
+
 class InvalidKeyCombination(KeyUtilsError):
     """Raised when a hybrid key combination is invalid or unsupported."""
 
