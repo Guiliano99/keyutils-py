@@ -44,6 +44,21 @@ class TestBase64Url(unittest.TestCase):
         with self.assertRaises(InvalidJWK):
             b64u_decode("ab+/")
 
+    def test_decode_rejects_non_alphabet_chars(self):
+        """GIVEN characters outside the URL-safe alphabet THEN InvalidJWK is raised.
+
+        Guards against ``base64`` silently discarding invalid characters
+        (``validate=False`` default) instead of erroring.
+        """
+        for bad in ("!!!!", "@#$%", "abcé", "a b c"):
+            with self.subTest(value=bad), self.assertRaises(InvalidJWK):
+                b64u_decode(bad)
+
+    def test_decode_rejects_invalid_length(self):
+        """GIVEN a length that cannot be valid base64 THEN InvalidJWK is raised."""
+        with self.assertRaises(InvalidJWK):
+            b64u_decode("A")
+
     def test_decode_rejects_non_string(self):
         with self.assertRaises(InvalidJWK):
             b64u_decode(b"AA")  # type: ignore[arg-type]

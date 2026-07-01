@@ -25,9 +25,13 @@ risking import cycles.
 import base64
 import hashlib
 import json
+import re
 from typing import Any, Dict
 
 from keyutils_py.exceptions import InvalidJWK
+
+# The unpadded base64url alphabet (RFC 7515 Appendix C).
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]*$")
 
 __all__ = [
     "b64u_encode",
@@ -77,12 +81,15 @@ def b64u_decode(value: str) -> bytes:
         raise InvalidJWK(f"Expected a base64url string, got {type(value).__name__}.")
     if "=" in value:
         raise InvalidJWK("base64url value must not contain '=' padding.")
-    if any(c in value for c in "+/ \t\r\n"):
+    if not _B64URL_RE.match(value):
         raise InvalidJWK("base64url value contains characters outside the URL-safe alphabet.")
     padding = "=" * (-len(value) % 4)
     try:
+        # ``validate=True`` (via ``urlsafe_b64decode``) is unnecessary here: the
+        # alphabet is already enforced above. ``b64decode`` still rejects an
+        # invalid length (``len % 4 == 1``) with a ``binascii.Error``.
         return base64.urlsafe_b64decode(value + padding)
-    except (ValueError, base64.binascii.Error) as exc:  # type: ignore[attr-defined]
+    except ValueError as exc:  # binascii.Error subclasses ValueError
         raise InvalidJWK(f"Invalid base64url value: {exc}") from exc
 
 
