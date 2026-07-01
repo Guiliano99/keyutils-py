@@ -534,8 +534,7 @@ class FrodoKEMPublicKey(PQKEMPublicKey):
         """Load an ML-KEM public key from raw bytes."""
         if oqs is not None:
             return super().from_public_bytes(data, name)  # type: ignore
-        else:
-            return cls(alg_name=name, public_key=data)
+        return cls(alg_name=name, public_key=data)
 
     @property
     def key_size(self) -> int:
@@ -627,7 +626,7 @@ class FrodoKEMPrivateKey(PQKEMPrivateKey):
     def from_seed(cls, alg_name: str, seed: bytes) -> "FrodoKEMPrivateKey":
         """Create a FrodoKEM private key from a seed."""
         if alg_name.lower() not in _FRODOKEM_NAMES:
-            raise ValueError(f"Invalid FrodoKEM algorithm name: {alg_name}. Expected one of {_FRODOKEM_NAMES.keys()}.")
+            raise ValueError(f"Invalid FrodoKEM algorithm name: {alg_name}. Expected one of {_FRODOKEM_NAMES}.")
 
         _seed_size = sum(_FRODOKEM_SEEDS_SIZE[alg_name].values()) // 8
         if len(seed) != _seed_size:
