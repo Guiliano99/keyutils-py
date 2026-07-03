@@ -99,6 +99,10 @@ class InvalidJWK(InvalidKeyData):
     """Raised when a JWK is malformed or a key cannot be represented as a JWK."""
 
 
+class InvalidJWS(BadDataFormat):
+    """Raised when a JWS/JWT is malformed, uses an unusable key, or fails to verify."""
+
+
 class InvalidKeyCombination(KeyUtilsError):
     """Raised when a hybrid key combination is invalid or unsupported."""
 

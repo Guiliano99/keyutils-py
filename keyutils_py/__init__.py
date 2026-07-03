@@ -38,7 +38,8 @@ Submodules (when you need more):
 * ``keyutils_py.compute`` — sign / verify / RSA-PSS / encaps / decaps / ECDH.
 * ``keyutils_py.keyutils`` — generate, save/load, SPKI, alg-id builders, manipulation.
 * ``keyutils_py.security`` — security-strength estimation.
-* ``keyutils_py.jwt`` — JWK serialization (``key_to_jwk`` / ``key_from_jwk``).
+* ``keyutils_py.jwt`` — JWK serialization (``key_to_jwk`` / ``key_from_jwk``) and
+  JWT/JWS signing (``sign_jwt`` / ``verify_jwt``).
 * ``keyutils_py.asn1utils`` — DER encode/decode and a ``BitString`` builder
 * ``keyutils_py.oids`` — OID maps + curve registry + sig parameter catalog.
 * ``keyutils_py.enums`` — :class:`KeySaveType`, :class:`SigAlgParametersSpec`.
@@ -77,7 +78,7 @@ from keyutils_py.keyutils import (
     save_key,
     validate_sig_alg_id,
 )
-from keyutils_py.jwt import jwk_thumbprint, key_from_jwk, key_to_jwk
+from keyutils_py.jwt import jwk_thumbprint, key_from_jwk, key_to_jwk, sign_jwt, verify_jwt
 from keyutils_py.security import estimate_key_security_strength
 
 __all__ = [
@@ -109,6 +110,9 @@ __all__ = [
     "key_to_jwk",
     "key_from_jwk",
     "jwk_thumbprint",
+    # JWT / JWS signing
+    "sign_jwt",
+    "verify_jwt",
     # Negative tests
     "manipulate_sig_based_on_key",
     # Exceptions

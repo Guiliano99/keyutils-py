@@ -27,9 +27,17 @@ Example::
     key = generate_key("ml-dsa-44")
     jwk = key_to_jwk(key)  # private JWK (kty="AKP")
     restored = key_from_jwk(jwk)  # MLDSAPrivateKey
+
+Signing a JWT::
+
+    from keyutils_py.jwt import sign_jwt, verify_jwt
+
+    token = sign_jwt({"sub": "alice"}, key)      # compact JWS, alg="ML-DSA-44"
+    claims = verify_jwt(token, key.public_key())  # -> {"sub": "alice"}
 """
 
 from keyutils_py.jwt.jw_keys import JWK, dumps, key_from_jwk, key_to_jwk, loads
+from keyutils_py.jwt.jws import sign_jws, sign_jwt, verify_jws, verify_jwt
 from keyutils_py.jwt.jwt_utils import b64u_decode, b64u_encode, jwk_thumbprint
 
 __all__ = [
@@ -41,4 +49,8 @@ __all__ = [
     "jwk_thumbprint",
     "b64u_encode",
     "b64u_decode",
+    "sign_jwt",
+    "verify_jwt",
+    "sign_jws",
+    "verify_jws",
 ]
