@@ -94,7 +94,7 @@ class HybridKeyFactory(AbstractKeyFactory):
     _COMPOSITE_KEM_COMBINATIONS: List[dict] = [
         {"pq_name": "ml-kem-768", "trad_name": "ecdh", "curve": "secp256r1"},
         {"pq_name": "ml-kem-1024", "trad_name": "rsa", "length": "3072"},
-        {"pq_name": "ml-kem-1024", "trad_name": "ecdh", "curve": "secp512r1"},
+        {"pq_name": "ml-kem-1024", "trad_name": "ecdh", "curve": "secp521r1"},
         {"pq_name": "ml-kem-768", "trad_name": "x25519"},
         {"pq_name": "ml-kem-768", "trad_name": "rsa", "length": "2048"},
         {"pq_name": "ml-kem-768", "trad_name": "rsa", "length": "3072"},
