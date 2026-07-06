@@ -212,3 +212,6 @@ __marimo__/
 
 # Pre-commit
 .pre-commit-cache/
+
+# Serena MCP server
+.serena/
