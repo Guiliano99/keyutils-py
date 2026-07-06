@@ -18,7 +18,7 @@ authors = [
 license = { text = "Apache-2.0" }
 
 dependencies = [
-    "cryptography>=49.0.0,<50.0.0",
+    "cryptography>=49.0.0,<51.0.0",
     "pyasn1>=0.6.3,<0.7.0",
     "pyasn1-alt-modules>=0.4.10,<0.5.0",
     "pyhsslms==2.0.0",
@@ -40,9 +40,9 @@ dev = [
     "safety==3.8.1",
     "pylint[spelling]==4.0.6",
     "reuse[charset-normalizer]==6.2.0",
-    "ruff==0.15.18",
+    "ruff>=0.15.18, <16.0.0",
     "pyupgrade==3.21.2",
-    "pyright[nodejs]==1.1.410",
+    "pyright[nodejs]==1.1.411",
     "codespell==2.4.2",
     "pre-commit==4.6.0",
 ]
@@ -66,7 +66,7 @@ exclude = ["tests/"]
 skip = "*keyutils_py/data*,*keyutils_py/fips*,*.pem,*.venv*,*uv.lock,*.egg-info,*.ruff_cache,*.git"
 # `sHat`, `thi` etc. are short mathematical variable identifiers from the FIPS
 # reference implementations and may appear in documentation citing them.
-ignore-words-list = "PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi"
+ignore-words-list = "PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi,disjointness"
 
 [tool.pylint.main]
 ignore = ["tests"]
