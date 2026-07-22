@@ -81,8 +81,6 @@ class HybridKeyFactory(AbstractKeyFactory):
         {"pq_name": "ml-kem-1024", "trad_name": "ecdh", "curve": "brainpoolP384r1"},
         {"pq_name": "frodokem-976-aes", "trad_name": "x25519"},
         {"pq_name": "frodokem-976-shake", "trad_name": "x25519"},
-        {"pq_name": "frodokem-640-aes", "trad_name": "ecdh", "curve": "brainpoolp256r1"},
-        {"pq_name": "frodokem-640-shake", "trad_name": "ecdh", "curve": "brainpoolp256r1"},
         {"pq_name": "frodokem-976-aes", "trad_name": "ecdh", "curve": "brainpoolp384r1"},
         {"pq_name": "frodokem-976-shake", "trad_name": "ecdh", "curve": "brainpoolp384r1"},
         {"pq_name": "frodokem-1344-aes", "trad_name": "ecdh", "curve": "brainpoolp512r1"},
@@ -293,9 +291,6 @@ class HybridKeyFactory(AbstractKeyFactory):
             raise InvalidKeyCombination(f"Unsupported hybrid type: {algorithm}")
 
         valid_combinations = HybridKeyFactory.hybrid_mappings[hybrid_type]
-
-        if hybrid_type == "kem" and pq_name in ["frodokem-aes-640", "frodokem-shake-640"]:
-            raise InvalidKeyCombination("FrodoKEM-640 is not supported (the claimed NIST level is only `1`).")
 
         params = HybridKeyFactory._get_valid_hybrid_combination(
             valid_combinations,
