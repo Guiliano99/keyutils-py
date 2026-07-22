@@ -52,24 +52,18 @@ VALID_MCELIECE_OPTIONS = {
 ML_KEM_NAMES = ["ml-kem-512", "ml-kem-768", "ml-kem-1024"]
 ML_KEM_PRIVATE_KEY_SIZE = {"ml-kem-768": 2400, "ml-kem-512": 1632, "ml-kem-1024": 3168}
 _FRODOKEM_SEEDS_SIZE = {
-    "frodokem-640-aes": {"lenA": 128, "lensec": 128, "lenSE": 256},
-    "frodokem-640-shake": {"lenA": 128, "lensec": 128, "lenSE": 256},
     "frodokem-976-aes": {"lenA": 128, "lensec": 192, "lenSE": 384},
     "frodokem-976-shake": {"lenA": 128, "lensec": 192, "lenSE": 384},
     "frodokem-1344-aes": {"lenA": 128, "lensec": 256, "lenSE": 512},
     "frodokem-1344-shake": {"lenA": 128, "lensec": 256, "lenSE": 512},
 }
 _FRODOKEM_NIST_LEVEL = {
-    "frodokem-640-aes": 1,
-    "frodokem-640-shake": 1,
     "frodokem-976-aes": 3,
     "frodokem-976-shake": 3,
     "frodokem-1344-aes": 5,
     "frodokem-1344-shake": 5,
 }
 _FRODOKEM_NAMES = [
-    "frodokem-640-aes",
-    "frodokem-640-shake",
     "frodokem-976-aes",
     "frodokem-976-shake",
     "frodokem-1344-aes",
@@ -676,7 +670,7 @@ class FrodoKEMPrivateKey(PQKEMPrivateKey):
     def _from_seed(cls, alg_name: str, seed: bytes) -> Tuple[bytes, bytes, bytes]:
         """Generate a new FrodoKEM private key from a seed.
 
-        :param alg_name: The algorithm name (e.g., "frodokem-640-aes").
+        :param alg_name: The algorithm name (e.g., "frodokem-976-aes").
         :param seed: The seed to use for key generation.
         :return: The private key, public key, and seed.
         """

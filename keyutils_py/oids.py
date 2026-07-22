@@ -152,7 +152,7 @@ FALCON_OID_2_NAME = {y: x for x, y in FALCON_NAME_2_OID.items()}
 
 
 # ---------------------------------------------------------------------------
-# SNTRUP761 / McEliece / FrodoKEM (oqs-only test-suite OIDs)
+# SNTRUP761 / McEliece (oqs-only test-suite OIDs)
 # ---------------------------------------------------------------------------
 
 id_ntru = f"{id_kem_test_suite}.1"
@@ -168,14 +168,19 @@ MCELIECE_NAME_2_OID = {
 }
 MCELIECE_OID_2_NAME = {y: x for x, y in MCELIECE_NAME_2_OID.items()}
 
-id_frodokem = f"{id_kem_test_suite}.3"
+# ---------------------------------------------------------------------------
+# FrodoKEM (ISO/IEC 18033-2 KEM arc; see REFERENCES.md ->
+# draft-smyslov-lamps-frodokem-certificates-03). FrodoKEM-640 and the
+# eFrodoKEM-* variants are not assigned OIDs by that arc and are not
+# supported here.
+# ---------------------------------------------------------------------------
+
+id_frodokem = "1.0.18033.2.2.7"
 FRODOKEM_NAME_2_OID = {
-    "frodokem-640-aes": univ.ObjectIdentifier(f"{id_frodokem}.1"),
-    "frodokem-640-shake": univ.ObjectIdentifier(f"{id_frodokem}.2"),
-    "frodokem-976-aes": univ.ObjectIdentifier(f"{id_frodokem}.3"),
-    "frodokem-976-shake": univ.ObjectIdentifier(f"{id_frodokem}.4"),
-    "frodokem-1344-aes": univ.ObjectIdentifier(f"{id_frodokem}.5"),
-    "frodokem-1344-shake": univ.ObjectIdentifier(f"{id_frodokem}.6"),
+    "frodokem-976-shake": univ.ObjectIdentifier(f"{id_frodokem}.1"),
+    "frodokem-1344-shake": univ.ObjectIdentifier(f"{id_frodokem}.2"),
+    "frodokem-976-aes": univ.ObjectIdentifier(f"{id_frodokem}.5"),
+    "frodokem-1344-aes": univ.ObjectIdentifier(f"{id_frodokem}.6"),
 }
 FRODOKEM_OID_2_NAME = {y: x for x, y in FRODOKEM_NAME_2_OID.items()}
 
@@ -411,14 +416,12 @@ _CHEMPAT_NAMES = [
     "chempat-ml-kem-1024-ecdh-brainpoolP384r1",  # .17
     "chempat-frodokem-976-aes-x25519",  # .18
     "chempat-frodokem-976-shake-x25519",  # .19
-    "chempat-frodokem-640-aes-ecdh-brainpoolP256r1",  # .20
-    "chempat-frodokem-640-shake-ecdh-brainpoolP256r1",  # .21
-    "chempat-frodokem-976-aes-ecdh-brainpoolP384r1",  # .22
-    "chempat-frodokem-976-shake-ecdh-brainpoolP384r1",  # .23
-    "chempat-frodokem-1344-aes-ecdh-brainpoolP512r1",  # .24
-    "chempat-frodokem-1344-shake-ecdh-brainpoolP512r1",  # .25
-    "chempat-frodokem-1344-aes-x448",  # .26
-    "chempat-frodokem-1344-shake-x448",  # .27
+    "chempat-frodokem-976-aes-ecdh-brainpoolP384r1",  # .20
+    "chempat-frodokem-976-shake-ecdh-brainpoolP384r1",  # .21
+    "chempat-frodokem-1344-aes-ecdh-brainpoolP512r1",  # .22
+    "chempat-frodokem-1344-shake-ecdh-brainpoolP512r1",  # .23
+    "chempat-frodokem-1344-aes-x448",  # .24
+    "chempat-frodokem-1344-shake-x448",  # .25
     # fmt: on
 ]
 
