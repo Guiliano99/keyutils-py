@@ -61,6 +61,7 @@ schemes:
 
 ```python
 from cryptography.hazmat.primitives.asymmetric import x25519
+
 priv = generate_key("xwing")
 ephemeral = x25519.X25519PrivateKey.generate()
 shared, ct = compute_encaps(priv.public_key(), other_key=ephemeral)
@@ -99,10 +100,10 @@ restored = load_private_key_from_file("/tmp/k.pem", password="hunter2")
 from keyutils_py import generate_key, prepare_spki
 
 key = generate_key("ml-dsa-44")
-spki = prepare_spki(key)                                  # default
-spki = prepare_spki(key, hash_alg="sha512")               # ML-DSA pre-hash OID
-spki = prepare_spki(rsa_key, use_rsa_pss=True)            # RSA-PSS-tagged
-spki = prepare_spki(for_kga=True, key_name="rsa")         # empty-key SPKI
+spki = prepare_spki(key)  # default
+spki = prepare_spki(key, hash_alg="sha512")  # ML-DSA pre-hash OID
+spki = prepare_spki(rsa_key, use_rsa_pss=True)  # RSA-PSS-tagged
+spki = prepare_spki(for_kga=True, key_name="rsa")  # empty-key SPKI
 ```
 
 ### 6. AlgorithmIdentifier-driven sign/verify
@@ -112,7 +113,7 @@ from keyutils_py import sign_with_alg_id, verify_signature_with_alg_id, validate
 from keyutils_py.rsa_pss import prepare_rsa_pss_alg_id
 
 alg_id = prepare_rsa_pss_alg_id("sha256")
-validate_sig_alg_id(alg_id)                # raises BadSigAlgIDParams if malformed
+validate_sig_alg_id(alg_id)  # raises BadSigAlgIDParams if malformed
 sig = sign_with_alg_id(rsa_key, alg_id, b"data")
 verify_signature_with_alg_id(rsa_key.public_key(), alg_id, b"data", sig)
 ```
@@ -122,7 +123,7 @@ verify_signature_with_alg_id(rsa_key.public_key(), alg_id, b"data", sig)
 ```python
 from keyutils_py import generate_key, estimate_key_security_strength
 
-estimate_key_security_strength(generate_key("xwing"))      # min(192, 128) = 128
+estimate_key_security_strength(generate_key("xwing"))  # min(192, 128) = 128
 estimate_key_security_strength(generate_key("ml-kem-1024"))  # 256
 ```
 
@@ -136,7 +137,7 @@ from keyutils_py import generate_key, sign_data, manipulate_sig_based_on_key
 
 key = generate_key("hss_lms_sha256_m32_h5_lmots_sha256_n32_w8", levels=2)
 sig = sign_data(b"msg", key)
-broken = manipulate_sig_based_on_key(sig, key)   # corrupts LMOTS, leaves auth-path intact
+broken = manipulate_sig_based_on_key(sig, key)  # corrupts LMOTS, leaves auth-path intact
 ```
 
 ## Public API at a glance
