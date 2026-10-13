@@ -38,6 +38,18 @@ SPDX-License-Identifier: Apache-2.0 -->
   - Signing with an AlgorithmIdentifier is still not supported for DSA, as
     before.
 
+- New public functions, exported from `keyutils_py`:
+  - `load_private_key_from_one_asym_key`: loads a private key from a
+    `OneAsymmetricKey`, given as DER bytes or a decoded structure.
+  - `load_public_key_from_spki`: loads a public key from a
+    `SubjectPublicKeyInfo`, given as DER bytes or a decoded structure.
+    `load_public_key_from_file` now uses it.
+  - `check_consistency_sig_alg_id_and_key`: raises `BadSigAlgID` when a
+    signature `AlgorithmIdentifier` does not match the given key.
+
+  Like the file loaders, the two loaders support PQ, stateful-hash, hybrid and
+  DSA keys; other traditional keys raise `NotImplementedError`.
+
 ## Changed
 
 - FrodoKEM algorithm identifiers now follow
