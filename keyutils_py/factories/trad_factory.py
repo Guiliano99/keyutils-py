@@ -11,12 +11,12 @@
 
 from typing import List, Optional
 
-from cryptography.hazmat.primitives.asymmetric import dh, dsa, ec, ed448, ed25519, rsa, x448, x25519
+from cryptography.hazmat.primitives.asymmetric import dh, ec, ed448, ed25519, rsa, x448, x25519
 from pyasn1_alt_modules import rfc5280
 
 from keyutils_py.factories.abstract_factory import AbstractKeyFactory
 from keyutils_py.oids import get_curve_instance
-from keyutils_py.types import PrivateKey, PublicKey, TradPrivateKey
+from keyutils_py.types import DSAPrivateKey, PrivateKey, PublicKey, TradPrivateKey
 
 
 class TradKeyFactory(AbstractKeyFactory):
@@ -140,8 +140,7 @@ class TradKeyFactory(AbstractKeyFactory):
             return rsa.generate_private_key(public_exponent=65537, key_size=length)
 
         if algorithm == "dsa":
-            length = int(params.get("length", 2048))
-            return dsa.generate_private_key(key_size=length)
+            return DSAPrivateKey.generate(key_size=int(params.get("length", 2048)))
 
         if algorithm in {"ed25519", "ed448", "x25519", "x448", "ecdh", "ecdsa", "ecc", "ec"}:
             curve = params.get("curve", "secp256r1")

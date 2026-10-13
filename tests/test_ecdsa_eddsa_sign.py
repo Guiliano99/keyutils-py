@@ -13,7 +13,7 @@ import unittest
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc5480, rfc8017, rfc9480, rfc9481, rfc9688
 
@@ -26,6 +26,7 @@ from keyutils_py import (
 from keyutils_py.exceptions import BadAlg, BadSigAlgID, BadSigAlgIDParams
 from keyutils_py.factories.trad_factory import TradKeyFactory
 from keyutils_py.keyutils import prepare_sig_alg_id, validate_sig_alg_id
+from keyutils_py.types import DSAPrivateKey
 
 
 def _alg_id(oid, parameters=None) -> rfc9480.AlgorithmIdentifier:
@@ -231,19 +232,19 @@ class TestDsaSign(unittest.TestCase):
     key is generated through ``TradKeyFactory`` (the trad key-generation entry).
     """
 
-    key: dsa.DSAPrivateKey
+    key: DSAPrivateKey
 
     @classmethod
     def setUpClass(cls):
         key = TradKeyFactory.generate_trad_key("dsa")
-        assert isinstance(key, dsa.DSAPrivateKey)
+        assert isinstance(key, DSAPrivateKey)
         cls.key = key
 
     def test_sign_data_native_verify(self):
         """GIVEN a generated DSA key / WHEN sign_data / THEN cryptography verifies it natively."""
         msg = b"dsa sign+verify"
         sig = sign_data(msg, self.key)
-        # The library only signs DSA; verify with cryptography's native DSA verify.
+        # Verify through the wrapper's cryptography-shaped API (HashAlgorithm instance accepted).
         self.key.public_key().verify(sig, msg, hashes.SHA256())
 
     def test_sign_data_explicit_hash(self):

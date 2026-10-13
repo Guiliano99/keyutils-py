@@ -31,7 +31,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, padding, rsa, x448, x25519
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa, x448, x25519
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc4055, rfc8017, rfc9480, rfc9481
 
@@ -79,7 +79,7 @@ from keyutils_py.oids import (
     hash_name_to_instance,
     may_return_oid_to_name,
 )
-from keyutils_py.types import ECDHPrivateKey, ECDHPublicKey, SignKey, VerifyKey
+from keyutils_py.types import DSAPrivateKey, DSAPublicKey, ECDHPrivateKey, ECDHPublicKey, SignKey, VerifyKey
 from keyutils_py.utils import (
     NOT_IMPLEMENTED_HINT,
     encode_to_der,
@@ -299,7 +299,7 @@ def sign_data(data: bytes, key: SignKey, **kwargs) -> bytes:
     * :class:`ec.EllipticCurvePrivateKey` produces an ECDSA signature; the digest
       defaults to ``sha256`` and may be overridden via ``hash_alg``.
     * Ed25519 / Ed448 keys sign the message directly (no ``hash_alg``).
-    * :class:`dsa.DSAPrivateKey` produces a DSA signature; the digest defaults to
+    * :class:`DSAPrivateKey` produces a DSA signature; the digest defaults to
       ``sha256`` and may be overridden via ``hash_alg``.
 
     :param data: The message bytes to sign.
@@ -331,9 +331,8 @@ def sign_data(data: bytes, key: SignKey, **kwargs) -> bytes:
         return key.sign(data, ec.ECDSA(hash_name_to_instance(hash_alg)))
     if isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
         return key.sign(data)
-    if isinstance(key, dsa.DSAPrivateKey):
-        hash_alg = kwargs.get("hash_alg") or "sha256"
-        return key.sign(data, hash_name_to_instance(hash_alg))
+    if isinstance(key, DSAPrivateKey):
+        return key.sign(data, kwargs.get("hash_alg") or "sha256")
     raise NotImplementedError(f"{type(key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
 
@@ -347,6 +346,8 @@ def verify_signature(public_key: VerifyKey, signature: bytes, data: bytes, **kwa
     * :class:`ec.EllipticCurvePublicKey` verifies an ECDSA signature; the digest
       defaults to ``sha256`` and may be overridden via ``hash_alg``.
     * Ed25519 / Ed448 keys verify the message directly.
+    * :class:`DSAPublicKey` verifies a DSA signature; the digest defaults to
+      ``sha256`` and may be overridden via ``hash_alg``.
 
     :param public_key: The signature public key selecting the algorithm.
     :param signature: The signature bytes to check.
@@ -380,6 +381,9 @@ def verify_signature(public_key: VerifyKey, signature: bytes, data: bytes, **kwa
         return
     if isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
         public_key.verify(signature, data)
+        return
+    if isinstance(public_key, DSAPublicKey):
+        public_key.verify(signature, data, kwargs.get("hash_alg") or "sha256")
         return
     raise NotImplementedError(f"{type(public_key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
@@ -415,8 +419,7 @@ def _check_eddsa_oid_matches_key(oid: univ.ObjectIdentifier, key: Any) -> None:
     expected = rfc9481.id_Ed25519 if is_ed25519 else rfc9481.id_Ed448
     if oid != expected:
         raise BadSigAlgID(
-            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the "
-            f"{type(key).__name__} EdDSA key."
+            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the {type(key).__name__} EdDSA key."
         )
 
 
@@ -448,7 +451,7 @@ def sign_with_alg_id(key: SignKey, alg_id: rfc9480.AlgorithmIdentifier, data: by
     name = _resolve_sig_alg_name(alg_id)
     if not isinstance(key, _AllSigPriv):
         raise BadAlg(f"Key is not a signature private key (got {type(key).__name__}).")
-    if isinstance(key, dsa.DSAPrivateKey):
+    if isinstance(key, DSAPrivateKey):
         raise BadAlg("DSA algorithm is not supported.")
 
     oid = alg_id["algorithm"]
@@ -523,7 +526,7 @@ def verify_signature_with_alg_id(
     name = _resolve_sig_alg_name(alg_id)
     if not isinstance(public_key, _AllSigPub):
         raise BadAlg(f"Public key is not a signature public key (got {type(public_key).__name__}).")
-    if isinstance(public_key, dsa.DSAPublicKey):
+    if isinstance(public_key, DSAPublicKey):
         raise BadAlg("DSA algorithm is not supported.")
 
     oid = alg_id["algorithm"]

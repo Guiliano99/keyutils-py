@@ -11,9 +11,10 @@
 
 import unittest
 
-from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed25519, ed448, rsa, x25519, x448
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, ed448, rsa, x25519, x448
 
 from keyutils_py import estimate_key_security_strength, generate_key
+from keyutils_py.types import DSAPrivateKey
 from keyutils_py.utils import OQS_AVAILABLE
 from keyutils_py.security import (
     HASH_ALG_TO_STRENGTH,
@@ -45,7 +46,7 @@ class TestRsaDsaStrength(unittest.TestCase):
 
     def test_dsa_public_key(self):
         """GIVEN a DSA public key / WHEN estimating / THEN matches RSA mapping."""
-        priv = dsa.generate_private_key(key_size=2048)
+        priv = DSAPrivateKey.generate(key_size=2048)
         self.assertEqual(estimate_key_security_strength(priv.public_key()), 112)
 
 
