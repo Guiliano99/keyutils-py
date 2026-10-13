@@ -44,8 +44,10 @@ jobs:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
       - uses: actions/checkout@v6
-      - name: Ruff
+      - name: Ruff check
         run: ruff check
+      - name: Ruff format
+        run: ruff format --check
 
   license_check:
     needs: prepare_env
