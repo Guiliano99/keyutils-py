@@ -790,17 +790,22 @@ def manipulate_sig_based_on_key(
     if key is None:
         return manipulate_first_byte(data)
     if isinstance(key, PQHashStatefulSigPrivateKey):
-        return _manipulate_pq_stateful_signature_bytes(data, key, manipulate_sig=True)
+        return manipulate_pq_stateful_signature_bytes(data, key, manipulate_sig=True)
     return manipulate_first_byte(data)
 
 
-def _manipulate_pq_stateful_signature_bytes(
+def manipulate_pq_stateful_signature_bytes(
     data: bytes,
     key: PQHashStatefulSigPrivateKey,
     manipulate_sig: bool = True,
     index: Optional[int] = None,
 ) -> bytes:
-    """Mutate a stateful-hash signature (XMSS / XMSSMT / HSS) for negative tests."""
+    """Mutate a stateful-hash signature (XMSS / XMSSMT / HSS) for negative tests.
+
+    Corrupts either the signature payload (``manipulate_sig=True``) or the
+    embedded LMS leaf-index (``manipulate_sig=False``, optionally to a specific
+    ``index``) to build invalid test vectors.
+    """
     index_start = 0
     alg_details: Optional[Dict[str, Any]] = None
     if isinstance(key, XMSSPrivateKey):
@@ -971,5 +976,6 @@ __all__ = [
     "decode_alg_id_parameters",
     # Negative-test helpers
     "manipulate_sig_based_on_key",
+    "manipulate_pq_stateful_signature_bytes",
     "modify_pq_stateful_sig_private_key",
 ]

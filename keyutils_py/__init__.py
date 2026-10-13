@@ -30,6 +30,8 @@ Public top-level surface (most callers stop here)::
         get_key_name,  # keyutils
         estimate_key_security_strength,  # security
         manipulate_sig_based_on_key,  # keyutils
+        manipulate_pq_stateful_signature_bytes,  # keyutils
+        modify_pq_stateful_sig_private_key,  # keyutils
         prepare_spki,  # keyutils
     )
 
@@ -71,7 +73,9 @@ from keyutils_py.keyutils import (
     get_key_name,
     load_private_key_from_file,
     load_public_key_from_file,
+    manipulate_pq_stateful_signature_bytes,
     manipulate_sig_based_on_key,
+    modify_pq_stateful_sig_private_key,
     prepare_spki,
     save_key,
     validate_sig_alg_id,
@@ -105,6 +109,8 @@ __all__ = [
     "estimate_key_security_strength",
     # Negative tests
     "manipulate_sig_based_on_key",
+    "manipulate_pq_stateful_signature_bytes",
+    "modify_pq_stateful_sig_private_key",
     # Exceptions
     "MissingOQSDependencyError",
 ]
