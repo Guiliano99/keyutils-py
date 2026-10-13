@@ -94,7 +94,7 @@ from keyutils_py.oids import (
     may_return_oid_to_name,
     sha_alg_name_to_oid,
 )
-from keyutils_py.types import PrivateKey, PublicKey
+from keyutils_py.types import DSAPrivateKey, DSAPublicKey, PrivateKey, PublicKey
 from keyutils_py.utils import (
     NOT_IMPLEMENTED_HINT,
     OQS_AVAILABLE,
@@ -428,6 +428,8 @@ def _load_private_key_from_one_asym_key(one_asym_key: rfc5958.OneAsymmetricKey):
         return PQKeyFactory.from_one_asym_key(one_asym_key)
     if HybridKeyFactory.is_hybrid_oid(oid):
         return HybridKeyFactory.from_one_asym_key(one_asym_key)
+    if oid == rfc5480.id_dsa:
+        return DSAPrivateKey.load(encode_to_der(one_asym_key))
     raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
 
 
@@ -468,6 +470,8 @@ def load_public_key_from_file(filepath: str):
         return PQKeyFactory.load_public_key_from_spki(spki)
     if HybridKeyFactory.is_hybrid_oid(oid):
         return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
+    if oid == rfc5480.id_dsa:
+        return DSAPublicKey.load(der)
     raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
 
 
@@ -579,13 +583,13 @@ def get_key_name(key: Union[PrivateKey, PublicKey]) -> str:
 
 def _is_private_key(key: object) -> bool:
     """Return True if ``key`` is a private key (has a ``public_key()`` method)."""
-    from cryptography.hazmat.primitives.asymmetric import dsa, ed25519, ed448, x25519, x448  # noqa
+    from cryptography.hazmat.primitives.asymmetric import ed25519, ed448, x25519, x448  # noqa
 
     return isinstance(
         key,
         (
             RSAPrivateKey,
-            dsa.DSAPrivateKey,
+            DSAPrivateKey,
             ec.EllipticCurvePrivateKey,
             ed25519.Ed25519PrivateKey,
             ed448.Ed448PrivateKey,
