@@ -14,6 +14,11 @@ from keyutils_py.compute import sign_data, sign_with_alg_id, verify_signature
 from keyutils_py.data import TRAD_KEYS_DIR
 from keyutils_py.exceptions import BadAlg
 from keyutils_py.factories.trad_factory import TradKeyFactory
+from keyutils_py.keys.key_pyasn1_utils import (
+    MAX_PBKDF2_ITERATIONS,
+    decrypt_private_key_pkcs8,
+    encrypt_private_key_pkcs8,
+)
 from keyutils_py.keys.trad_keys import DSAPrivateKey, DSAPublicKey, to_pycryptodome_hash
 from keyutils_py.keyutils import (
     get_key_name,
@@ -21,8 +26,9 @@ from keyutils_py.keyutils import (
     load_public_key_from_file,
     prepare_sig_alg_id,
 )
-from keyutils_py.utils import try_decode_pyasn1
-from pyasn1_alt_modules import rfc5280, rfc5480
+from keyutils_py.utils import encode_to_der, try_decode_pyasn1
+from pyasn1.type import univ
+from pyasn1_alt_modules import rfc5208, rfc5280, rfc5480, rfc8018
 
 try:  # cryptography still ships DSA today; the cross-checks vanish with it.
     from cryptography.hazmat.primitives.asymmetric import dsa as crypto_dsa
@@ -188,6 +194,54 @@ class TestSerialization(unittest.TestCase):
         """GIVEN a public PEM / WHEN loaded as private / THEN ValueError."""
         with self.assertRaises(ValueError):
             DSAPrivateKey.load(self.key.public_key().public_bytes())
+
+
+def _tamper_pbkdf2(enc_der: bytes, iterations=None, key_length=None) -> bytes:
+    """Rewrite the PBKDF2 parameters inside a PBES2 EncryptedPrivateKeyInfo."""
+    enc_pki, _ = try_decode_pyasn1(enc_der, rfc5208.EncryptedPrivateKeyInfo())
+    pbes2, _ = try_decode_pyasn1(enc_pki["encryptionAlgorithm"]["parameters"], rfc8018.PBES2_params())
+    kdf = pbes2["keyDerivationFunc"]
+    params, _ = try_decode_pyasn1(kdf["parameters"], rfc8018.PBKDF2_params())
+    if iterations is not None:
+        params["iterationCount"] = iterations
+    if key_length is not None:
+        params["keyLength"] = key_length
+    kdf["parameters"] = univ.Any(encode_to_der(params))
+    enc_pki["encryptionAlgorithm"]["parameters"] = univ.Any(encode_to_der(pbes2))
+    return encode_to_der(enc_pki)
+
+
+class TestPbkdf2Limits(unittest.TestCase):
+    """Untrusted PBKDF2 parameters must be rejected before any key derivation runs."""
+
+    def setUp(self):
+        """Encrypt the fixture key with a cheap iteration count."""
+        self.enc = encrypt_private_key_pkcs8(_fixture_key().private_bytes(Encoding.DER), b"pw", iterations=1000)
+
+    def test_valid_file_still_decrypts(self):
+        """GIVEN a normal encrypted key / WHEN decrypted / THEN the PKCS#8 DER comes back."""
+        self.assertTrue(decrypt_private_key_pkcs8(self.enc, b"pw"))
+
+    def test_excessive_iterations_rejected(self):
+        """GIVEN iterationCount above the cap / WHEN decrypting / THEN ValueError (fast, no PBKDF2)."""
+        bad = _tamper_pbkdf2(self.enc, iterations=MAX_PBKDF2_ITERATIONS + 1)
+        with self.assertRaisesRegex(ValueError, "iteration count"):
+            decrypt_private_key_pkcs8(bad, b"pw")
+
+    def test_wrong_key_length_rejected(self):
+        """GIVEN keyLength != 32 / WHEN decrypting / THEN ValueError instead of a silent cipher downgrade."""
+        bad = _tamper_pbkdf2(self.enc, key_length=16)
+        with self.assertRaisesRegex(ValueError, "keyLength"):
+            decrypt_private_key_pkcs8(bad, b"pw")
+
+    def test_dsa_load_uses_same_limits(self):
+        """GIVEN a tampered encrypted DSA PEM / WHEN loaded with a password / THEN ValueError."""
+        import base64
+
+        bad = base64.b64encode(_tamper_pbkdf2(self.enc, iterations=MAX_PBKDF2_ITERATIONS + 1)).decode()
+        pem = f"-----BEGIN ENCRYPTED PRIVATE KEY-----\n{bad}\n-----END ENCRYPTED PRIVATE KEY-----\n".encode()
+        with self.assertRaisesRegex(ValueError, "iteration count"):
+            DSAPrivateKey.load(pem, password=b"pw")
 
 
 class TestGenerate(unittest.TestCase):
