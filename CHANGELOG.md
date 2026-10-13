@@ -22,8 +22,11 @@ SPDX-License-Identifier: Apache-2.0 -->
     `key_size`; the public key also exposes `p`, `q`, `g` and `y`, and the
     private key `x`, all as integers.
   - `hash_alg` is a string such as `"sha256"`; a `cryptography` hash instance
-    is also accepted. Supported hashes: SHA-1, SHA-224, SHA-256, SHA-384 and
-    SHA-512.
+    is also accepted.
+  - Signing supports only SHA-256 and raises `ValueError` for any other hash.
+    Verification also accepts SHA-1, SHA-224, SHA-384 and SHA-512, so
+    signatures made by other implementations can still be checked. This is
+    stricter than `cryptography`, which signed with any hash.
   - A failed verification raises `cryptography.exceptions.InvalidSignature`.
   - Keys load from PEM or DER in PKCS#8, `DSA PRIVATE KEY` and
     SubjectPublicKeyInfo form, including encrypted PKCS#8. The file loaders

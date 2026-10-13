@@ -131,10 +131,35 @@ class TestSignVerify(unittest.TestCase):
 
     def test_compute_dispatch(self):
         """GIVEN sign_data / verify_signature / WHEN given the wrapper / THEN both dispatch to it."""
-        sig = sign_data(DATA, self.key, hash_alg="sha1")
-        verify_signature(self.key.public_key(), sig, DATA, hash_alg="sha1")
+        sig = sign_data(DATA, self.key)
+        verify_signature(self.key.public_key(), sig, DATA)
         with self.assertRaises(InvalidSignature):
-            verify_signature(self.key.public_key(), sig, DATA)  # wrong default hash
+            verify_signature(self.key.public_key(), sig, DATA, hash_alg="sha1")  # wrong hash
+
+    def test_signing_only_sha256(self):
+        """GIVEN any hash but SHA-256 / WHEN signing (directly or via sign_data) / THEN ValueError."""
+        for hash_alg in ("sha1", "sha224", "sha384", "sha512", hashes.SHA384(), "shake128"):
+            with self.subTest(hash_alg=hash_alg):
+                with self.assertRaises(ValueError):
+                    self.key.sign(DATA, hash_alg)
+                with self.assertRaises(ValueError):
+                    sign_data(DATA, self.key, hash_alg=hash_alg)
+
+    @unittest.skipIf(crypto_dsa is None, "cryptography no longer ships DSA")
+    def test_verify_accepts_other_hashes(self):
+        """GIVEN signatures made elsewhere with SHA-1/224/384/512 / WHEN verifying / THEN they verify."""
+        with open(FIXTURE, "rb") as fh:
+            legacy = serialization.load_pem_private_key(fh.read(), password=None)
+        for name, hash_cls in (
+            ("sha1", hashes.SHA1),
+            ("sha224", hashes.SHA224),
+            ("sha384", hashes.SHA384),
+            ("sha512", hashes.SHA512),
+        ):
+            with self.subTest(hash_alg=name):
+                sig = legacy.sign(DATA, hash_cls())
+                self.key.public_key().verify(sig, DATA, name)
+                verify_signature(self.key.public_key(), sig, DATA, hash_alg=name)
 
     def test_sign_with_alg_id_still_rejected(self):
         """GIVEN an alg_id / WHEN signing with a DSA key / THEN BadAlg as before."""

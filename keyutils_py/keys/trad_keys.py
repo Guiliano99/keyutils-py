@@ -212,8 +212,15 @@ class DSAPrivateKey:
     def sign(self, data: bytes, hash_alg: HashAlg = "sha256") -> bytes:
         """Sign ``data`` and return a DER-encoded ``Dss-Sig-Value``.
 
-        :raises ValueError: If ``hash_alg`` is not usable with DSA.
+        Signing is limited to SHA-256. :meth:`DSAPublicKey.verify` still accepts
+        the other FIPS 186-4 hashes, so signatures from other implementations
+        can be checked.
+
+        :raises ValueError: If ``hash_alg`` is not SHA-256.
         """
+        name = hash_alg.name if isinstance(hash_alg, hashes.HashAlgorithm) else hash_alg
+        if name.lower() != "sha256":
+            raise ValueError(f"DSA signing supports only sha256, got {name!r}")
         digest = to_pycryptodome_hash(hash_alg, data)
         return DSS.new(self._key, "fips-186-3", encoding="der").sign(digest)
 
