@@ -40,7 +40,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from keyutils_py.keys.key_pyasn1_utils import encrypt_private_key_pkcs8_pem
+from keyutils_py.keys.key_pyasn1_utils import decrypt_private_key_pkcs8_pem, encrypt_private_key_pkcs8_pem
 
 __all__ = ["DSAPrivateKey", "DSAPublicKey", "to_pycryptodome_hash"]
 
@@ -190,7 +190,10 @@ class DSAPrivateKey:
         :param data: The serialised key.
         :param password: Passphrase for an ``ENCRYPTED PRIVATE KEY`` (PBES2) block.
         """
-        return cls(DSA.import_key(data, passphrase=password))
+        if password is not None and b"ENCRYPTED PRIVATE KEY" in data:
+            # Decrypt with the package helper so the PBKDF2 limits apply (see key_pyasn1_utils).
+            data = decrypt_private_key_pkcs8_pem(data, password)
+        return cls(DSA.import_key(data))
 
     @property
     def key_size(self) -> int:

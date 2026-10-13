@@ -115,6 +115,10 @@ def encrypt_private_key_pkcs8(
     return encode_to_der(enc_pki)
 
 
+#: Upper bound accepted when decrypting, so a crafted file cannot hang the loader.
+MAX_PBKDF2_ITERATIONS = 10_000_000
+
+
 def encrypt_private_key_pkcs8_pem(
     private_key_der: bytes,
     password: str | bytes,
@@ -158,6 +162,11 @@ def decrypt_private_key_pkcs8(encrypted_der: bytes, password: str | bytes) -> by
     salt = bytes(pbkdf2_params["salt"]["specified"])
     iterations = int(pbkdf2_params["iterationCount"])
     key_length = int(pbkdf2_params["keyLength"]) if pbkdf2_params["keyLength"].isValue else 32
+    # Untrusted file input: bound the work factor and keep the key size matching AES-256.
+    if not 1 <= iterations <= MAX_PBKDF2_ITERATIONS:
+        raise ValueError(f"PBKDF2 iteration count {iterations} is outside 1..{MAX_PBKDF2_ITERATIONS}.")
+    if key_length != 32:
+        raise ValueError(f"PBKDF2 keyLength {key_length} does not match AES-256 (32).")
 
     enc_scheme = pbes2_params["encryptionScheme"]
     if enc_scheme["algorithm"] != rfc3565.id_aes256_CBC:
