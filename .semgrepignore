@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Paths semgrep should skip (used by `make semgrep`; not run in CI).
+.venv/
+build/
+*.egg-info/
+# Test key fixtures, not code.
+keyutils_py/data/
