@@ -32,7 +32,7 @@ import logging
 import math
 import os
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -43,6 +43,8 @@ from pyasn1_alt_modules import rfc4055, rfc5280, rfc5480, rfc5958, rfc8017, rfc9
 from keyutils_py.exceptions import (
     BadAlg,
     BadAsn1Data,
+    BadSigAlgID,
+    InvalidKeyCombination,
     InvalidKeyData,
     MissingOQSDependencyError,
 )
@@ -55,7 +57,7 @@ from keyutils_py.keys.abstract_pq import (
     PQSignaturePrivateKey,
     PQSignaturePublicKey,
 )
-from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey
+from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey
 from keyutils_py.keys.abstract_wrapper_keys import (
     AbstractCompositePrivateKey,
     HybridPrivateKey,
@@ -88,7 +90,9 @@ from keyutils_py.oids import (
     SIG_ALG_OID_2_PARAMETERS_SPEC,
     SLH_DSA_NAME_2_OID,
     TRAD_SIG_NAME_2_OID,
+    TRAD_SIG_OID_2_NAME,
     get_curve_instance,
+    get_hash_from_oid,
     hash_name_to_instance,
     id_rsa_kem_spki,
     may_return_oid_to_name,
@@ -127,6 +131,116 @@ def validate_sig_alg_id(alg_id: rfc9480.AlgorithmIdentifier) -> None:
     from keyutils_py.compute import _validate_sig_alg_id  # pylint: disable=import-outside-toplevel
 
     _validate_sig_alg_id(alg_id)
+
+
+def _check_trad_sig_alg_id(public_key: PublicKey, oid: str) -> None:
+    """Validate that a traditional public key matches a signature ``oid``.
+
+    :raises BadAlg: If the key type is not a recognised traditional signature key.
+    :raises BadSigAlgID: If the key type does not match ``oid``.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed448, ed25519  # pylint: disable=import-outside-toplevel
+
+    name = TRAD_SIG_OID_2_NAME.get(univ.ObjectIdentifier(oid))
+    if name is not None:
+        if isinstance(public_key, ed448.Ed448PublicKey):
+            if name == "ed448":
+                return
+        elif isinstance(public_key, ed25519.Ed25519PublicKey):
+            if name == "ed25519":
+                return
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            if name.startswith("ecdsa-"):
+                return
+        elif isinstance(public_key, RSAPublicKey):
+            # A bare RSA key matches only PKCS#1 v1.5 sig OIDs; RSASSA-PSS OIDs are a different key type.
+            if name.startswith("rsa-"):
+                return
+        elif isinstance(public_key, DSAPublicKey):
+            if name.startswith("dsa-"):
+                return
+        else:
+            raise BadAlg(f"Unknown key type to verify the alg id and the matching key: {type(public_key).__name__}.")
+
+    raise BadSigAlgID(
+        "The public key was not of the same type as the algorithm identifier implied.",
+        error_details=[f"OID {may_return_oid_to_name(univ.ObjectIdentifier(oid))}; key {type(public_key).__name__}"],
+    )
+
+
+def check_consistency_sig_alg_id_and_key(
+    alg_id: rfc9480.AlgorithmIdentifier, key: Union[PrivateKey, PublicKey]
+) -> None:
+    """Check that a signature ``AlgorithmIdentifier`` is consistent with ``key``.
+
+    Validates composite, PQ-signature, stateful-hash, and traditional keys.
+
+    :raises BadSigAlgID: If the key does not match ``alg_id``.
+    :raises ValueError: If the key type is unknown.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed448, ed25519  # pylint: disable=import-outside-toplevel
+
+    oid = alg_id["algorithm"]
+
+    if oid in COMPOSITE_SIG_OID_TO_NAME:
+        name = COMPOSITE_SIG_OID_TO_NAME[oid]
+        name_type = getattr(key, "name", type(key).__name__)
+        get_oid = getattr(key, "get_oid", None)
+        if get_oid is None:
+            raise BadSigAlgID(
+                "The public key was not of the same type as the algorithm identifier implied.",
+                error_details=[f"OID: {oid}. Public key type: {name_type}. OID-lookup: {may_return_oid_to_name(oid)}"],
+            )
+        try:
+            if str(get_oid(use_pss=name.endswith("-pss"))) != str(oid):
+                raise BadSigAlgID("The public key was not of the same type as the algorithm identifier implied.")
+            return
+        except InvalidKeyCombination as exc:
+            raise BadSigAlgID(
+                "The public key was not of the same type as the algorithm identifier implied.",
+                error_details=[f"OID: {oid}. Public key type: {name_type}. OID-lookup: {may_return_oid_to_name(oid)}"],
+            ) from exc
+
+    try:
+        hash_alg = get_hash_from_oid(oid)
+    except ValueError as exc:
+        raise BadSigAlgID("The algorithm identifier was not valid, and does not match the key.") from exc
+
+    if isinstance(key, (PQSignaturePublicKey, PQSignaturePrivateKey)):
+        candidate = key.name + ("" if hash_alg is None else "-" + hash_alg)
+        if candidate not in PQ_NAME_2_OID or str(PQ_NAME_2_OID[candidate]) != str(oid):
+            raise BadSigAlgID(
+                "The public key was not of the same type as the algorithm identifier implied.",
+                error_details=[f"OID {oid} ({may_return_oid_to_name(oid)}); key {type(key).__name__}"],
+            )
+    elif isinstance(key, (PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey)):
+        if key.get_oid() != oid:
+            raise BadSigAlgID(
+                "The public key was not of the same type as the algorithm identifier implied.",
+                error_details=[f"OID {oid} ({may_return_oid_to_name(oid)}); key {type(key).__name__}"],
+            )
+    elif isinstance(
+        key,
+        (
+            RSAPrivateKey,
+            RSAPublicKey,
+            ec.EllipticCurvePrivateKey,
+            ec.EllipticCurvePublicKey,
+            ed25519.Ed25519PrivateKey,
+            ed25519.Ed25519PublicKey,
+            ed448.Ed448PrivateKey,
+            ed448.Ed448PublicKey,
+            DSAPrivateKey,
+            DSAPublicKey,
+        ),
+    ):
+        to_public = getattr(key, "public_key", None)
+        _check_trad_sig_alg_id(cast(PublicKey, to_public() if to_public is not None else key), str(oid))
+    else:
+        raise ValueError(
+            f"Unknown key type to verify the alg id and matching key. "
+            f"OID: {may_return_oid_to_name(oid)}. Key type: {type(key).__name__}."
+        )
 
 
 def _cast_to_bytes(data: Union[bytes, str, base.Asn1Item]) -> bytes:
@@ -433,6 +547,24 @@ def _load_private_key_from_one_asym_key(one_asym_key: rfc5958.OneAsymmetricKey):
     raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
 
 
+def load_private_key_from_one_asym_key(data: Union[bytes, rfc5958.OneAsymmetricKey]):
+    """Load a private key from a ``OneAsymmetricKey`` (DER bytes or a decoded structure).
+
+    :raises InvalidKeyData: If DER bytes do not decode to a ``OneAsymmetricKey``.
+    :raises NotImplementedError: For key types the loaders do not support.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        try:
+            one_asym_key, rest = try_decode_pyasn1(bytes(data), rfc5958.OneAsymmetricKey())
+        except Exception as exc:  # noqa: BLE001
+            raise InvalidKeyData("Failed to decode OneAsymmetricKey.") from exc
+        if rest:
+            raise BadAsn1Data("OneAsymmetricKey")
+    else:
+        one_asym_key = data
+    return _load_private_key_from_one_asym_key(one_asym_key)
+
+
 def load_private_key_from_file(filepath: str, password: Optional[str] = "11111"):
     """Load a private key from a PEM file (PKCS#8 or plain)."""
     with open(filepath, "rb") as fh:
@@ -452,15 +584,21 @@ def load_private_key_from_file(filepath: str, password: Optional[str] = "11111")
     return _load_private_key_from_one_asym_key(one_asym_key)
 
 
-def load_public_key_from_file(filepath: str):
-    """Load a public key from a PEM ``SubjectPublicKeyInfo`` file."""
-    der = load_and_decode_pem_file(filepath)
-    try:
-        spki, rest = try_decode_pyasn1(der, rfc5280.SubjectPublicKeyInfo())
-    except Exception as exc:  # noqa: BLE001
-        raise InvalidKeyData(f"Failed to decode SubjectPublicKeyInfo from {filepath}.") from exc
-    if rest:
-        raise BadAsn1Data("SubjectPublicKeyInfo")
+def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
+    """Load a public key from a ``SubjectPublicKeyInfo`` (DER bytes or a decoded structure).
+
+    :raises InvalidKeyData: If DER bytes do not decode to a ``SubjectPublicKeyInfo``.
+    :raises NotImplementedError: For key types the loaders do not support.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        try:
+            spki, rest = try_decode_pyasn1(bytes(data), rfc5280.SubjectPublicKeyInfo())
+        except Exception as exc:  # noqa: BLE001
+            raise InvalidKeyData("Failed to decode SubjectPublicKeyInfo.") from exc
+        if rest:
+            raise BadAsn1Data("SubjectPublicKeyInfo")
+    else:
+        spki = data
     oid = spki["algorithm"]["algorithm"]
     if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
         require_oqs_if_needed(PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid])
@@ -471,8 +609,20 @@ def load_public_key_from_file(filepath: str):
     if HybridKeyFactory.is_hybrid_oid(oid):
         return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
     if oid == rfc5480.id_dsa:
-        return DSAPublicKey.load(der)
+        return DSAPublicKey.load(encode_to_der(spki))
     raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
+
+
+def load_public_key_from_file(filepath: str):
+    """Load a public key from a PEM ``SubjectPublicKeyInfo`` file."""
+    der = load_and_decode_pem_file(filepath)
+    try:
+        spki, rest = try_decode_pyasn1(der, rfc5280.SubjectPublicKeyInfo())
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidKeyData(f"Failed to decode SubjectPublicKeyInfo from {filepath}.") from exc
+    if rest:
+        raise BadAsn1Data("SubjectPublicKeyInfo")
+    return load_public_key_from_spki(spki)
 
 
 def _stateful_hash_filename_to_algorithm(filename: str) -> Optional[str]:
@@ -978,4 +1128,8 @@ __all__ = [
     "manipulate_sig_based_on_key",
     "manipulate_pq_stateful_signature_bytes",
     "modify_pq_stateful_sig_private_key",
+    # Loading and consistency checks
+    "load_private_key_from_one_asym_key",
+    "load_public_key_from_spki",
+    "check_consistency_sig_alg_id_and_key",
 ]

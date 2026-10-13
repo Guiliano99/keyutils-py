@@ -32,6 +32,9 @@ Public top-level surface (most callers stop here)::
         manipulate_sig_based_on_key,  # keyutils
         manipulate_pq_stateful_signature_bytes,  # keyutils
         modify_pq_stateful_sig_private_key,  # keyutils
+        load_private_key_from_one_asym_key,  # keyutils
+        load_public_key_from_spki,  # keyutils
+        check_consistency_sig_alg_id_and_key,  # keyutils
         prepare_spki,  # keyutils
     )
 
@@ -69,10 +72,13 @@ from keyutils_py.compute import (
 )
 from keyutils_py.exceptions import MissingOQSDependencyError
 from keyutils_py.keyutils import (
+    check_consistency_sig_alg_id_and_key,
     generate_key,
     get_key_name,
     load_private_key_from_file,
+    load_private_key_from_one_asym_key,
     load_public_key_from_file,
+    load_public_key_from_spki,
     manipulate_pq_stateful_signature_bytes,
     manipulate_sig_based_on_key,
     modify_pq_stateful_sig_private_key,
@@ -111,6 +117,9 @@ __all__ = [
     "manipulate_sig_based_on_key",
     "manipulate_pq_stateful_signature_bytes",
     "modify_pq_stateful_sig_private_key",
+    "load_private_key_from_one_asym_key",
+    "load_public_key_from_spki",
+    "check_consistency_sig_alg_id_and_key",
     # Exceptions
     "MissingOQSDependencyError",
 ]
