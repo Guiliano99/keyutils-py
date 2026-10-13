@@ -391,7 +391,7 @@ class FrodoKEM(object):
         """
         n1 = len(C)
         n2 = len(C[0])
-        b = bitstring.BitArray(self.D * n1 * n2)
+        b = bitstring.BitArray.from_zeros(self.D * n1 * n2)
         # 1. for i = 0; i < n1; i += 1
         for i in range(n1):
             # for j = 0; j < n2; j += 1
