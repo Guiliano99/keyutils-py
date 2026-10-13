@@ -247,11 +247,10 @@ class TestDsaSign(unittest.TestCase):
         # Verify through the wrapper's cryptography-shaped API (HashAlgorithm instance accepted).
         self.key.public_key().verify(sig, msg, hashes.SHA256())
 
-    def test_sign_data_explicit_hash(self):
-        """GIVEN a DSA key + hash_alg=sha384 / WHEN sign_data / THEN native verify with SHA384."""
-        msg = b"dsa sha384"
-        sig = sign_data(msg, self.key, hash_alg="sha384")
-        self.key.public_key().verify(sig, msg, hashes.SHA384())
+    def test_sign_data_non_sha256_rejected(self):
+        """GIVEN a DSA key + hash_alg=sha384 / WHEN sign_data / THEN ValueError (DSA signs with SHA-256 only)."""
+        with self.assertRaises(ValueError):
+            sign_data(b"dsa sha384", self.key, hash_alg="sha384")
 
     def test_sign_data_tampered_rejected(self):
         """GIVEN a DSA signature / WHEN a byte is flipped / THEN native verify raises InvalidSignature."""

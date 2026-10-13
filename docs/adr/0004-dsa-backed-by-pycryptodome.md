@@ -16,7 +16,8 @@ behind the `keyutils_py.types` facade. Signatures are DER `Dss-Sig-Value`
 (pycryptodome `encoding="der"`), which is byte-compatible with `cryptography`
 and X.509. Hashes are named by string as everywhere else in the package; a
 `cryptography` `HashAlgorithm` instance is tolerated so old call sites keep
-working.
+working. Signing is limited to SHA-256 (the suite exercises `dsa-sha256`); verification still
+accepts SHA-1, SHA-224, SHA-384 and SHA-512 so signatures from other implementations can be checked.
 
 Alternatives rejected: dropping DSA (the suite still exercises `dsa-sha256`
 negative paths and `id-dsa` SPKI/KGA tables), and hand-rolling DSA over pyasn1
