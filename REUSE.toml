@@ -15,6 +15,12 @@ SPDX-FileCopyrightText = "Copyright 2025 Siemens AG"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
+path = ["docs/adr/**", "REFERENCES.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Copyright 2026"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
 path = ["uv.lock"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Copyright 2025 Siemens AG"
