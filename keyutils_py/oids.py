@@ -170,9 +170,13 @@ MCELIECE_OID_2_NAME = {y: x for x, y in MCELIECE_NAME_2_OID.items()}
 
 # ---------------------------------------------------------------------------
 # FrodoKEM (ISO/IEC 18033-2 KEM arc; see REFERENCES.md ->
-# draft-smyslov-lamps-frodokem-certificates-03). FrodoKEM-640 and the
-# eFrodoKEM-* variants are not assigned OIDs by that arc and are not
-# supported here.
+# draft-smyslov-lamps-frodokem-certificates-03). FrodoKEM-640 is not assigned
+# an OID by that arc and is not supported here.
+#
+# Note: -03 also assigns OIDs to the eFrodoKEM-976/1344 variants (.3 and .4 for
+# SHAKE, .7 and .8 for AES). They are intentionally not implemented: they are
+# not relevant for certificates, and neither liboqs nor the bundled
+# fips/frodokem.py provides them.
 # ---------------------------------------------------------------------------
 
 id_frodokem = "1.0.18033.2.2.7"
