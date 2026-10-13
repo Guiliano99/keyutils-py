@@ -5,6 +5,36 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 # Unreleased
 
+## Added
+
+- DSA wrapper classes `DSAPrivateKey` and `DSAPublicKey` in
+  `keyutils_py/keys/trad_keys.py`, backed by `pycryptodome`. They replace the
+  `cryptography` DSA classes throughout the package.
+
+  Why: `cryptography` has deprecated DSA and announced its removal in an
+  upcoming release. Several modules checked keys with the `cryptography` DSA
+  classes, so the removal would have broken the package at import time, not
+  only DSA signing. `pycryptodome` was already a dependency.
+
+  - The wrappers keep the call shapes of the `cryptography` classes:
+    `sign(data, hash_alg)`, `verify(signature, data, hash_alg)`,
+    `private_bytes`, `public_bytes` and `public_key()`. Both keys expose
+    `key_size`; the public key also exposes `p`, `q`, `g` and `y`, and the
+    private key `x`, all as integers.
+  - `hash_alg` is a string such as `"sha256"`; a `cryptography` hash instance
+    is also accepted. Supported hashes: SHA-1, SHA-224, SHA-256, SHA-384 and
+    SHA-512.
+  - A failed verification raises `cryptography.exceptions.InvalidSignature`.
+  - Keys load from PEM or DER in PKCS#8, `DSA PRIVATE KEY` and
+    SubjectPublicKeyInfo form, including encrypted PKCS#8. The file loaders
+    `load_private_key_from_file` and `load_public_key_from_file` now handle
+    DSA, and `generate_trad_key("dsa")` returns the wrapper.
+  - Behavior difference: `pycryptodome` generates only 1024, 2048 and 3072
+    bit keys, and a 2048-bit key uses a 224-bit subprime `q`, where
+    `cryptography` used 256 bits. Keys from other sources verify normally.
+  - Signing with an AlgorithmIdentifier is still not supported for DSA, as
+    before.
+
 ## Changed
 
 - FrodoKEM algorithm identifiers now follow
