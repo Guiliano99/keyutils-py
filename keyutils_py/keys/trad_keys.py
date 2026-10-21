@@ -4,8 +4,9 @@
 
 """Traditional signature keys that ``cryptography`` no longer provides.
 
-``cryptography`` has deprecated DSA and will remove it in a future release. This
-module keeps DSA usable by wrapping pycryptodome (already a dependency) behind
+``cryptography`` deprecated DSA and announced its removal; ADR-0004 records
+why this package keeps DSA by wrapping pycryptodome (also a dependency for
+RSASSA-PSS-SHAKE) instead of dropping it. The wrapper exposes
 the attribute surface the ``cryptography`` key classes expose, so the rest of
 the package dispatches on :class:`DSAPrivateKey` / :class:`DSAPublicKey` exactly
 as it did on ``dsa.DSAPrivateKey`` / ``dsa.DSAPublicKey``:

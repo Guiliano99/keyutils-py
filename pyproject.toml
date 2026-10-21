@@ -26,9 +26,10 @@ dependencies = [
     "bitstring==5.0.0",
     # Used by compute_ecdh's cofactor-multiplication path.
     "tinyec==0.4.0",
-    # Required for RSASSA-PSS-SHAKE128/256 (cryptography has no SHAKE-as-hash)
-    # and the FixedSHAKE wrappers in data_objects.py.
-    "pycryptodome>=3.24.1,<4.0.0",
+    # Required for RSASSA-PSS-SHAKE128/256 (cryptography has no SHAKE-as-hash),
+    # the FixedSHAKE wrappers in data_objects.py, and the DSA wrapper
+    # (see docs/adr/0004-dsa-backed-by-pycryptodome.md).
+    "pycryptodome>=4.1.0,<5.0.0",
 ]
 
 [project.optional-dependencies]
