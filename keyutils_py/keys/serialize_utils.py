@@ -64,3 +64,53 @@ def prepare_ec_private_key(
         explicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatSimple, 1)
     )
     return ec_private_key
+
+
+def derive_and_encrypt_key(
+    password: str, data: bytes, decrypt: bool, iv: bytes | None = None
+) -> tuple[bytes, bytes]:
+    """Derive an AES-256 key with PBKDF2 (salt=iv) and AES-CBC encrypt/decrypt."""
+    import os
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+    from .key_pyasn1_utils import _compute_aes_cbc
+
+    if iv is None and decrypt:
+        raise ValueError("For decryption an `iv` must be provided.")
+
+    if iv is None:
+        iv = os.urandom(16)
+
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=iv,
+        iterations=100_000,
+    )
+    enc_key = kdf.derive(password.encode("utf-8"))
+
+    result = _compute_aes_cbc(key=enc_key, data=data, iv=iv, decrypt=decrypt)
+    return result, iv
+
+
+def prepare_enc_key_pem(password: str, one_asym_key: bytes, key_name: bytes) -> bytes:
+    """Prepare a PEM formatted encrypted private-key block (legacy format)."""
+    import base64
+    import textwrap
+
+    enc_data, iv = derive_and_encrypt_key(password=password, data=one_asym_key, decrypt=False)
+
+    pem_lines = [b"-----BEGIN " + key_name + b" PRIVATE KEY-----"]
+    pem_lines.append(b"Proc-Type: 4,ENCRYPTED")
+    pem_lines.append(b"DEK-Info: AES-256-CBC," + iv.hex().upper().encode("ascii"))
+    pem_lines.append(b"")
+
+    b64 = base64.b64encode(enc_data).decode("ascii")
+    wrapped = "\n".join(textwrap.wrap(b64, width=64))
+    pem_lines.extend(line.encode("ascii") for line in wrapped.split("\n"))
+    pem_lines.append(b"-----END " + key_name + b" PRIVATE KEY-----")
+    pem_lines.append(b"")
+
+    return b"\n".join(pem_lines)
