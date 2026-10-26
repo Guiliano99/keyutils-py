@@ -10,6 +10,8 @@ import unittest
 from cryptography.hazmat.primitives import serialization
 from keyutils_py import (
     check_consistency_sig_alg_id_and_key,
+    compute_decaps,
+    compute_encaps,
     generate_key,
     load_private_key_from_one_asym_key,
     load_public_key_from_spki,
@@ -18,6 +20,7 @@ from keyutils_py import (
 )
 from keyutils_py.exceptions import BadSigAlgID, InvalidKeyData
 from keyutils_py.factories.trad_factory import TradKeyFactory
+from keyutils_py.keys.chempat_key import ChempatPublicKey
 from keyutils_py.keys.trad_keys import DSAPrivateKey
 from keyutils_py.keyutils import prepare_alg_id, prepare_sig_alg_id
 from keyutils_py.oids import PQ_NAME_2_OID
@@ -115,6 +118,43 @@ class TestCheckConsistency(unittest.TestCase):
             check_consistency_sig_alg_id_and_key(prepare_sig_alg_id(self.ec, hash_alg="sha256"), self.rsa.public_key())
         with self.assertRaises(BadSigAlgID):
             check_consistency_sig_alg_id_and_key(prepare_alg_id(PQ_NAME_2_OID["ml-dsa-65"]), self.ec.public_key())
+
+
+class TestChempatRoundTrip(unittest.TestCase):
+    """A Chempat key survives save -> load; the raw public-key layout is written and parsed consistently."""
+
+    ALGORITHMS = (
+        "chempat-ml-kem-768-x25519",
+        "chempat-ml-kem-1024-x448",
+        "chempat-ml-kem-768-ecdh-secp256r1",
+        "chempat-ml-kem-1024-ecdh-secp384r1",
+    )
+
+    def test_private_key_round_trip_decapsulates(self):
+        """GIVEN a saved Chempat key / WHEN reloaded / THEN it decapsulates what the original encapsulated."""
+        for alg in self.ALGORITHMS:
+            with self.subTest(alg=alg):
+                key = generate_key(alg)
+                reloaded = load_private_key_from_one_asym_key(_saved_der(key))
+                shared, ciphertext = compute_encaps(key.public_key())  # type: ignore[arg-type]
+                self.assertEqual(compute_decaps(reloaded, ciphertext), shared)  # type: ignore[arg-type]
+
+    def test_spki_round_trip(self):
+        """GIVEN a Chempat public key / WHEN its SPKI is loaded / THEN the raw bytes are unchanged."""
+        for alg in self.ALGORITHMS:
+            with self.subTest(alg=alg):
+                pub = generate_key(alg).public_key()
+                loaded = load_public_key_from_spki(prepare_spki(pub))
+                self.assertEqual(loaded.public_bytes_raw(), pub.public_bytes_raw())  # type: ignore[union-attr]
+
+    def test_malformed_public_bytes_rejected(self):
+        """GIVEN truncated, over-long or empty raw bytes / WHEN parsed / THEN InvalidKeyData."""
+        name = "chempat-ml-kem-768-x25519"
+        raw = generate_key(name).public_key().public_bytes_raw()  # type: ignore[union-attr]
+        for data in (raw[:20], raw + b"\x00", b""):
+            with self.subTest(length=len(data)):
+                with self.assertRaises(InvalidKeyData):
+                    ChempatPublicKey.from_public_bytes(data, name)
 
 
 if __name__ == "__main__":
