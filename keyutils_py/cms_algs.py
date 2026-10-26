@@ -55,13 +55,13 @@ CMS_KEM_ALG_MAPPING: Dict[str, CmsAlgorithmMapping] = {
 }
 
 
-def is_sig_alg_allowed(name: str, profile: str = "all_supported_signature_algorithms") -> bool:
+def is_cms_sig_hash_alg_allowed(name: str, profile: str = "all_supported_signature_algorithms") -> bool:
     """Return True if the signature algorithm name is allowed by a CMS profile."""
     mapping = CMS_SIG_ALG_MAPPING.get(profile)
     return mapping is not None and name in mapping.allowed_algs
 
 
-def is_kem_alg_allowed(name: str, profile: str = "all_supported_kem_algorithms") -> bool:
+def is_cms_kem_alg_allowed(name: str, profile: str = "all_supported_kem_algorithms") -> bool:
     """Return True if the KEM algorithm name is allowed by a CMS profile."""
     mapping = CMS_KEM_ALG_MAPPING.get(profile)
     return mapping is not None and name in mapping.allowed_algs
