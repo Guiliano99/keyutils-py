@@ -11,10 +11,11 @@
 
 from typing import List, Optional
 
-from cryptography.hazmat.primitives.asymmetric import dh, ec, ed448, ed25519, rsa, x448, x25519
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa, x448, x25519
 from pyasn1_alt_modules import rfc5280
 
 from keyutils_py.factories.abstract_factory import AbstractKeyFactory
+from keyutils_py.keys.trad_keys import DHPrivateKey
 from keyutils_py.oids import get_curve_instance
 from keyutils_py.types import DSAPrivateKey, PrivateKey, PublicKey, TradPrivateKey
 
@@ -101,28 +102,16 @@ class TradKeyFactory(AbstractKeyFactory):
         g: int = 2,
         secret_scalar: Optional[int] = None,
         length: int = 2048,
-    ) -> dh.DHPrivateKey:
+    ) -> TradPrivateKey:
         """Generate a Diffie-Hellman private key.
 
         PyCryptodome has no finite-field DH public-key primitive, so the
         (deprecated) cryptography FFDH API is retained intentionally until it
         is removed; default parameter generation uses that library.
         """
-        if p is None:
-            parameters = dh.generate_parameters(generator=g, key_size=length)
-        else:
-            parameters = dh.DHParameterNumbers(p, g).parameters()
-
-        if secret_scalar is not None:
-            if p is None:
-                raise ValueError("`p` must be provided when using `secret_scalar`.")
-            public_number = pow(g, secret_scalar, p)
-            return dh.DHPrivateNumbers(
-                x=secret_scalar,
-                public_numbers=dh.DHPublicNumbers(public_number, parameters.parameter_numbers()),
-            ).private_key()
-
-        return parameters.generate_private_key()
+        return DHPrivateKey.generate(
+            key_size=length, p=p, g=g, secret_scalar=secret_scalar
+        )
 
     @staticmethod
     def generate_trad_key(algorithm: str = "rsa", **params) -> TradPrivateKey:
