@@ -35,7 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 # liboqs lives behind an extra because it pulls system deps (libssl-dev, cmake).
 pq = [
-    "liboqs-python @ git+https://github.com/Guiliano99/liboqs-python-stateful-sig.git",
+    "liboqs-python @ git+https://github.com/Guiliano99/liboqs-python-stateful-sig.git@BumpV16rc1",
 ]
 dev = [
     "safety==3.8.1",

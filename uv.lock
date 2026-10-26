@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [[package]]
@@ -467,7 +467,7 @@ requires-dist = [
     { name = "bitstring", specifier = "==5.0.0" },
     { name = "codespell", marker = "extra == 'dev'", specifier = "==2.4.3" },
     { name = "cryptography", specifier = ">=49.0.0,<51.0.0" },
-    { name = "liboqs-python", marker = "extra == 'pq'", git = "https://github.com/Guiliano99/liboqs-python-stateful-sig.git" },
+    { name = "liboqs-python", marker = "extra == 'pq'", git = "https://github.com/Guiliano99/liboqs-python-stateful-sig.git?rev=BumpV16rc1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.7.0" },
     { name = "pyasn1", specifier = ">=0.6.4,<0.7.0" },
     { name = "pyasn1-alt-modules", specifier = ">=0.4.10,<0.5.0" },
@@ -485,8 +485,8 @@ provides-extras = ["pq", "dev"]
 
 [[package]]
 name = "liboqs-python"
-version = "0.15.0"
-source = { git = "https://github.com/Guiliano99/liboqs-python-stateful-sig.git#80eaa332d556136418a508ee5f48e9abae24a89b" }
+version = "0.16.0"
+source = { git = "https://github.com/Guiliano99/liboqs-python-stateful-sig.git?rev=BumpV16rc1#86a9a1a2355c2996804f834dbf872ebc1f279379" }
 
 [[package]]
 name = "license-expression"
