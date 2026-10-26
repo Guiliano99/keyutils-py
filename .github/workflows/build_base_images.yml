@@ -61,3 +61,36 @@ jobs:
             --build-arg BASE_IMAGE=ghcr.io/${REPO_OWNER_LC}/keyutils-base:latest \
             --push \
             -f data/dockerfiles/Dockerfile.dev .
+
+  generate_sbom:
+    needs: build_and_push
+    runs-on: ubuntu-22.04
+    name: Generate SBOM with Syft after base/dev image push
+    permissions:
+      contents: read
+    steps:
+      - name: Set lowercase owner
+        id: setenv
+        run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Generate base image SBOM
+        uses: anchore/syft-action@v0.18.0
+        with:
+          image: ghcr.io/${{ env.REPO_OWNER_LC }}/keyutils-base:latest
+          format: cyclonedx-json
+          output-file: keyutils-base.sbom.json
+
+      - name: Generate dev image SBOM
+        uses: anchore/syft-action@v0.18.0
+        with:
+          image: ghcr.io/${{ env.REPO_OWNER_LC }}/keyutils-dev:latest
+          format: cyclonedx-json
+          output-file: keyutils-dev.sbom.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyutils-sboms
+          path: |
+            keyutils-base.sbom.json
+            keyutils-dev.sbom.json
