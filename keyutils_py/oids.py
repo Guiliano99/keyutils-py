@@ -177,6 +177,10 @@ MCELIECE_OID_2_NAME = {y: x for x, y in MCELIECE_NAME_2_OID.items()}
 # SHAKE, .7 and .8 for AES). They are intentionally not implemented: they are
 # not relevant for certificates, and neither liboqs nor the bundled
 # fips/frodokem.py provides them.
+
+# Related, but currently unassigned: draft-song-lamps-pq-composite-frodokem-00
+# defines Composite FrodoKEM algorithms for X.509, but all of its OIDs are
+# still TBD. Those identifiers will be added here once assigned.
 # ---------------------------------------------------------------------------
 
 id_frodokem = "1.0.18033.2.2.7"
