@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 # Changelog
 
-# Unreleased
+# 0.0.2
 
 ## Added
 
