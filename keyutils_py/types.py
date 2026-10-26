@@ -16,7 +16,6 @@ key types. CMP-protocol aliases (CertObjOrPath, RecipInfo, etc.) are omitted.
 
 from typing import Union
 
-from cryptography.hazmat.primitives.asymmetric.dh import DHPrivateKey, DHPublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from cryptography.hazmat.primitives.asymmetric.x448 import X448PrivateKey, X448PublicKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -43,7 +42,7 @@ from keyutils_py.keys.abstract_wrapper_keys import (
     WrapperPrivateKey,
     WrapperPublicKey,
 )
-from keyutils_py.keys.trad_keys import DSAPrivateKey, DSAPublicKey
+from keyutils_py.keys.trad_keys import DHPrivateKey, DHPublicKey, DSAPrivateKey, DSAPublicKey
 
 ECPrivateKey = Union[ECDHPrivateKey, ECSignKey]
 
@@ -80,6 +79,8 @@ Strint = Union[str, int]
 
 
 __all__ = [
+    "DHPrivateKey",
+    "DHPublicKey",
     "ECDHPrivateKey",
     "ECDHPublicKey",
     "ECSignKey",
