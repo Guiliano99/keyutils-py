@@ -25,13 +25,15 @@ instance is also accepted so callers written against the old class keep working.
 
 from __future__ import annotations
 
-from typing import Any, Union
+import warnings
+from typing import Any, Optional, Union
 
 from Crypto.Hash import SHA1, SHA224, SHA256, SHA384, SHA512
 from Crypto.PublicKey import DSA
 from Crypto.Signature import DSS
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.serialization import (
     BestAvailableEncryption,
     Encoding,
@@ -43,7 +45,7 @@ from cryptography.hazmat.primitives.serialization import (
 
 from keyutils_py.keys.key_pyasn1_utils import decrypt_private_key_pkcs8_pem, encrypt_private_key_pkcs8_pem
 
-__all__ = ["DSAPrivateKey", "DSAPublicKey", "to_pycryptodome_hash"]
+__all__ = ["DSAPrivateKey", "DSAPublicKey", "DHPrivateKey", "DHPublicKey", "to_pycryptodome_hash"]
 
 HashAlg = Union[str, hashes.HashAlgorithm]
 
@@ -73,6 +75,7 @@ def to_pycryptodome_hash(hash_alg: HashAlg, data: bytes) -> Any:
 
 
 def _pem_with_newline(pem: bytes) -> bytes:
+    """Return the value."""
     # pycryptodome omits the trailing newline that ``cryptography`` always emits.
     return pem if pem.endswith(b"\n") else pem + b"\n"
 
@@ -258,3 +261,199 @@ class DSAPrivateKey:
                 )
             return _pem_with_newline(self._key.export_key(format="PEM", pkcs8=pkcs8))
         raise ValueError(f"Unsupported encoding: {encoding}")
+
+
+class DHPublicKey:
+    """Finite-field DH public key backed directly by ``cryptography``.
+
+    The finite-field primitive is still implemented here by the (deprecated)
+    ``cryptography`` layer; keeping it behind this wrapper lets the rest of the
+    package dispatch on this class and lets the backend change later without
+    touching the call sites.
+    """
+
+    def __init__(self, key: Any) -> None:
+        """Wrap the cryptography DH key."""
+        self._key = key
+
+    @classmethod
+    def load(cls, data: bytes) -> DHPublicKey:
+        """Return the value."""
+        from cryptography.hazmat.primitives.serialization import load_der_public_key, load_pem_public_key
+
+        try:
+            loaded = load_pem_public_key(data)
+        except Exception:
+            loaded = load_der_public_key(data)
+        return cls(loaded)
+
+    @property
+    def key_size(self) -> int:
+        """Return the value."""
+        return int(self._key.public_numbers().parameter_numbers.p.bit_length())
+
+    @property
+    def p(self) -> int:
+        """Return the value."""
+        return int(self._key.public_numbers().parameter_numbers.p)
+
+    @property
+    def g(self) -> int:
+        """Return the value."""
+        return int(self._key.public_numbers().parameter_numbers.g)
+
+    @property
+    def y(self) -> int:
+        """Return the value."""
+        return int(self._key.public_numbers().y)
+
+    @property
+    def q(self) -> int:
+        """Return the value."""
+        parameters = self._key.public_numbers().parameter_numbers.q
+        return int(parameters) if parameters is not None else 0
+
+    def public_bytes(
+        self,
+        encoding: Any = None,
+        format: Any = None,
+    ) -> bytes:
+        """Return the value."""
+        if encoding is None:
+            from cryptography.hazmat.primitives.serialization import Encoding
+
+            encoding = Encoding.PEM
+        if format is None:
+            from cryptography.hazmat.primitives.serialization import PublicFormat
+
+            format = PublicFormat.SubjectPublicKeyInfo
+        return self._key.public_bytes(encoding=encoding, format=format)
+
+    def __eq__(self, other: object) -> bool:
+        """Return the value."""
+        if not isinstance(other, DHPublicKey):
+            return NotImplemented
+        return (self.p, self.g, self.y) == (other.p, other.g, other.y)
+
+    def __hash__(self) -> int:
+        """Return the value."""
+        return hash((self.p, self.g, self.y))
+
+
+class DHPrivateKey:
+    """Finite-field DH private key backed directly by ``cryptography``."""
+
+    def __init__(self, key: Any) -> None:
+        """Wrap the cryptography DH key."""
+        self._key = key
+
+    @classmethod
+    def generate(
+        cls,
+        key_size: int = 2048,
+        p: Optional[int] = None,
+        g: int = 2,
+        secret_scalar: Optional[int] = None,
+    ) -> DHPrivateKey:
+        """Return the value."""
+        if p is None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                parameters = dh.generate_parameters(generator=g, key_size=key_size)
+        else:
+            parameters = dh.DHParameterNumbers(p, g).parameters()
+
+        if secret_scalar is not None:
+            if p is None:
+                raise ValueError("`p` must be provided when using `secret_scalar`.")
+            public_number = pow(g, secret_scalar, p)
+            key = dh.DHPrivateNumbers(
+                x=secret_scalar,
+                public_numbers=dh.DHPublicNumbers(public_number, parameters.parameter_numbers()),
+            ).private_key()
+            return cls(key)
+
+        return cls(parameters.generate_private_key())
+
+    @classmethod
+    def load(cls, data: bytes, password: Optional[str] = None, password_bytes: Optional[bytes] = None) -> DHPrivateKey:
+        """Return the value."""
+        from cryptography.hazmat.primitives.serialization import load_der_private_key, load_pem_private_key
+
+        if password is not None and b"ENCRYPTED PRIVATE KEY" in data:
+            from keyutils_py.keys.key_pyasn1_utils import decrypt_private_key_pkcs8_pem
+
+            pwd_bytes = password.encode() if isinstance(password, str) else (password or b"")
+            data = decrypt_private_key_pkcs8_pem(data, pwd_bytes)
+
+        try:
+            loaded = load_pem_private_key(data, password=password_bytes)
+        except Exception:
+            loaded = load_der_private_key(data, password=password_bytes)
+        return cls(loaded)
+
+    @property
+    def key_size(self) -> int:
+        """Return the value."""
+        return int(self.p.bit_length())
+
+    @property
+    def p(self) -> int:
+        """Return the value."""
+        return int(self._key.private_numbers().public_numbers.parameter_numbers.p)
+
+    @property
+    def g(self) -> int:
+        """Return the value."""
+        return int(self._key.private_numbers().public_numbers.parameter_numbers.g)
+
+    @property
+    def x(self) -> int:
+        """Return the value."""
+        return int(self._key.private_numbers().x)
+
+    @property
+    def y(self) -> int:
+        """Return the value."""
+        return int(self._key.private_numbers().public_numbers.y)
+
+    @property
+    def q(self) -> Optional[int]:
+        """Return the value."""
+        parameters = self._key.public_key().public_numbers().parameter_numbers.q
+        return int(parameters) if parameters is not None else None
+
+    def public_key(self) -> DHPublicKey:
+        """Return the value."""
+        return DHPublicKey(self._key.public_key())
+
+    def private_bytes(
+        self,
+        encoding: Any = None,
+        format: Any = None,
+        encryption_algorithm: Any = None,
+    ) -> bytes:
+        """Return the value."""
+        from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+        if encoding is None:
+            encoding = Encoding.PEM
+        if format is None:
+            format = PrivateFormat.PKCS8
+        if encryption_algorithm is None:
+            encryption_algorithm = NoEncryption()
+        return self._key.private_bytes(
+            encoding=encoding,
+            format=format,
+            encryption_algorithm=encryption_algorithm,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Return the value."""
+        if not isinstance(other, DHPrivateKey):
+            return NotImplemented
+        return (self.p, self.g, self.x) == (other.p, other.g, other.x)
+
+    def __hash__(self) -> int:
+        """Return the value."""
+        return hash((self.p, self.g, self.x))
