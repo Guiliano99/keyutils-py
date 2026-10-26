@@ -102,7 +102,12 @@ class TradKeyFactory(AbstractKeyFactory):
         secret_scalar: Optional[int] = None,
         length: int = 2048,
     ) -> dh.DHPrivateKey:
-        """Generate a Diffie-Hellman private key."""
+        """Generate a Diffie-Hellman private key.
+
+        PyCryptodome has no finite-field DH public-key primitive, so the
+        (deprecated) cryptography FFDH API is retained intentionally until it
+        is removed; default parameter generation uses that library.
+        """
         if p is None:
             parameters = dh.generate_parameters(generator=g, key_size=length)
         else:
