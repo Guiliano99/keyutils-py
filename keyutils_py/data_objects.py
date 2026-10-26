@@ -21,7 +21,7 @@
   into RSA-PSS with SHAKE.
 """
 
-from typing import Optional
+from typing import Optional, cast
 
 from Crypto.Hash import SHAKE128, SHAKE256
 from pyasn1.type import constraint, namedtype, tag, univ
@@ -199,8 +199,8 @@ class FixedSHAKE128:
     def digest(self) -> bytes:
         """Return the fixed-length digest."""
         if self._digest is None:
-            self._digest = self._shake.read(self.digest_length)
-        return self._digest
+            self._digest = cast(bytes, self._shake.read(self.digest_length))
+        return cast(bytes, self._digest)
 
     @property
     def digest_size(self) -> int:
@@ -236,8 +236,8 @@ class FixedSHAKE256:
     def digest(self) -> bytes:
         """Return the fixed-length digest."""
         if self._digest is None:
-            self._digest = self._shake.read(self.digest_length)
-        return self._digest
+            self._digest = cast(bytes, self._shake.read(self.digest_length))
+        return cast(bytes, self._digest)
 
     @property
     def digest_size(self) -> int:
