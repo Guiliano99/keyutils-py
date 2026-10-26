@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keyutils-py"
-version = "0.0.1"
+version = "0.0.2"
 description = "Standalone PQ stateful-hash key library (HSS / LMS / XMSS / XMSSMT)."
 readme = "README.md"
 requires-python = ">=3.13"
