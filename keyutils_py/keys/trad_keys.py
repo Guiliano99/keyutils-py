@@ -378,6 +378,8 @@ class DHPrivateKey:
     @classmethod
     def load(cls, data: bytes, password: Optional[str] = None, password_bytes: Optional[bytes] = None) -> DHPrivateKey:
         """Return the value."""
+        import warnings
+
         from cryptography.hazmat.primitives.serialization import load_der_private_key, load_pem_private_key
 
         if password is not None and b"ENCRYPTED PRIVATE KEY" in data:
@@ -386,10 +388,12 @@ class DHPrivateKey:
             pwd_bytes = password.encode() if isinstance(password, str) else (password or b"")
             data = decrypt_private_key_pkcs8_pem(data, pwd_bytes)
 
-        try:
-            loaded = load_pem_private_key(data, password=password_bytes)
-        except Exception:
-            loaded = load_der_private_key(data, password=password_bytes)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                loaded = load_pem_private_key(data, password=password_bytes)
+            except Exception:
+                loaded = load_der_private_key(data, password=password_bytes)
         return cls(loaded)
 
     @property
