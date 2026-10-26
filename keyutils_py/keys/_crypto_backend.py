@@ -28,9 +28,11 @@ isolated to one module.
 
 from __future__ import annotations
 
-from typing import Type, Union
+from typing import Callable, Type, TypeVar, Union
 
 from cryptography.hazmat.primitives.asymmetric import mldsa, mlkem
+
+from keyutils_py.exceptions import InvalidKeyData
 
 _MLDSA_PRIV_CLASSES: dict[str, Type] = {
     "ml-dsa-44": mldsa.MLDSA44PrivateKey,
@@ -70,24 +72,39 @@ def is_cryptography_native_alg(name: str) -> bool:
     return name.lower() in NATIVE_NAMES
 
 
+_T = TypeVar("_T")
+
+
+def _build(name: str, builder: Callable[[], _T]) -> _T:
+    """Run a ``cryptography`` key constructor, mapping its ``ValueError`` to :class:`InvalidKeyData`.
+
+    ``cryptography`` rejects malformed key material (e.g. a wrong length) with a bare ``ValueError``.
+    Callers handle malformed keys as :class:`InvalidKeyData`, so the error type has to be uniform.
+    """
+    try:
+        return builder()
+    except ValueError as exc:
+        raise InvalidKeyData(f"Invalid {name} key data: {exc}") from exc
+
+
 def build_native_mldsa_priv(name: str, seed: bytes) -> NativeMLDSAPriv:
     """Construct an ML-DSA private key from a 32-byte seed."""
-    return _MLDSA_PRIV_CLASSES[name].from_seed_bytes(seed)
+    return _build(name, lambda: _MLDSA_PRIV_CLASSES[name].from_seed_bytes(seed))
 
 
 def build_native_mldsa_pub(name: str, raw: bytes) -> NativeMLDSAPub:
     """Construct an ML-DSA public key from raw public-key bytes."""
-    return _MLDSA_PUB_CLASSES[name].from_public_bytes(raw)
+    return _build(name, lambda: _MLDSA_PUB_CLASSES[name].from_public_bytes(raw))
 
 
 def build_native_mlkem_priv(name: str, seed: bytes) -> NativeMLKEMPriv:
     """Construct an ML-KEM private key from a 64-byte seed."""
-    return _MLKEM_PRIV_CLASSES[name].from_seed_bytes(seed)
+    return _build(name, lambda: _MLKEM_PRIV_CLASSES[name].from_seed_bytes(seed))
 
 
 def build_native_mlkem_pub(name: str, raw: bytes) -> NativeMLKEMPub:
     """Construct an ML-KEM public key from raw public-key bytes."""
-    return _MLKEM_PUB_CLASSES[name].from_public_bytes(raw)
+    return _build(name, lambda: _MLKEM_PUB_CLASSES[name].from_public_bytes(raw))
 
 
 __all__ = [
