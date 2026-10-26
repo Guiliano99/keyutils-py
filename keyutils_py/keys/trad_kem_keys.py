@@ -273,12 +273,13 @@ class DHKEMPublicKey(TradKEMPublicKey):
 
     @property
     def key_size(self) -> int:
-        """Return the encoded public-key size in bytes."""
+        """Return the encoded public-key size in bytes (must match ``encode()``)."""
         if isinstance(self._public_key, x25519.X25519PublicKey):
             return 32
         if isinstance(self._public_key, x448.X448PublicKey):
             return 56
-        return self._public_key.curve.key_size // 8 + 1
+        # X9.62 uncompressed point: 0x04 || X || Y (what encode() emits).
+        return 2 * ((self._public_key.curve.key_size + 7) // 8) + 1
 
     @property
     def ct_length(self) -> int:
@@ -407,7 +408,10 @@ class DHKEMPrivateKey(TradKEMPrivateKey):
 
     @property
     def key_size(self) -> int:
-        """Return the underlying public-key size in bytes."""
+        """Return the encoded private-key size in bytes (must match ``encode()``)."""
+        if isinstance(self._private_key, ec.EllipticCurvePrivateKey):
+            # Bare EC scalar, per draft-josefsson-chempat Table 4 (Nsk).
+            return (self._private_key.curve.key_size + 7) // 8
         return self.public_key().key_size
 
     @property
@@ -450,7 +454,7 @@ class DHKEMPrivateKey(TradKEMPrivateKey):
         """Return the raw private-key bytes (big-endian scalar for EC, raw bytes for X25519/X448)."""
         if isinstance(self._private_key, ec.EllipticCurvePrivateKey):
             private_numbers = self._private_key.private_numbers()
-            return private_numbers.private_value.to_bytes(self._private_key.key_size, byteorder="big")
+            return private_numbers.private_value.to_bytes(self.key_size, byteorder="big")
         return self._private_key.private_bytes_raw()
 
     @staticmethod
