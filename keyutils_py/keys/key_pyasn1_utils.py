@@ -30,6 +30,18 @@ from pyasn1_alt_modules import rfc3565, rfc5208, rfc8018, rfc9480
 from keyutils_py.utils import encode_to_der, try_decode_pyasn1
 
 CUSTOM_KEY_TYPES = [
+    b"SNTRUP761",
+    b"McEliece",
+    b"SLH-DSA",
+    b"COMPOSITE-SIG",
+    b"COMPOSITE-KEM",
+    b"COMPOSITE-DHKEM",
+    b"FrodoKEM",
+    b"XWING",
+    b"ML-DSA",
+    b"ML-KEM",
+    b"RSA-KEM",
+    b"CHEMPAT",
     b"BASE",
     b"PQ",
     b"XMSS",
