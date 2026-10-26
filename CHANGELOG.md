@@ -3,6 +3,33 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 # Changelog
 
+# Unreleased
+
+## Added
+
+- `keyutils_py.types` now exports every concrete key class (`MLDSAPrivateKey`,
+  `CompositeSigPrivateKey`, `ChempatPrivateKey`, ...) next to the key aliases, so a
+  consumer imports key types from this one module instead of from `keyutils_py.keys.*`.
+  The classes are resolved lazily, because the key and factory modules import the aliases
+  from `types.py` and an eager import would be circular.
+- `KeyUtilsError` and its subclasses carry the RFC 4210 `PKIFailureInfo` name and bit
+  (`failinfo`, `bit_num`, `get_failinfo()`, `get_error_details()`), as plain data. A consumer
+  that builds protocol responses can use `KeyUtilsError` as the root of its own exception
+  hierarchy and get one class identity for the errors raised in this package.
+
+## Changed
+
+- `InvalidKeyCombination` now derives from `BadAlg`, which it is a specialisation of.
+- `BadAsn1Data` accepts a keyword-only `failinfo`.
+
+## Fixed
+
+- The pure-Python FrodoKEM implementation now works with `bitstring` 5: the remaining
+  `BitArray(length=...)` calls in `__bytes_to_bit_array` and `decode`, and the removed
+  `ConstBitStream` in `kem_decaps`, are replaced.
+- Malformed ML-DSA / ML-KEM key material (for example a public key of the wrong length) raises
+  `InvalidKeyData` instead of the bare `ValueError` raised by `cryptography`.
+
 # 0.0.2
 
 ## Added
