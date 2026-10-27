@@ -45,8 +45,15 @@ class TestLoadPrivateKeyFromFile(unittest.TestCase):
 
     def test_save_and_load_every_family(self):
         """GIVEN keys of each family / WHEN saved with and without password / THEN they load back equal."""
-        for algorithm, params in (("rsa", {"length": 1024}), ("dsa", {}), ("dh", {"length": 512}), ("ecdsa", {}),
-                                  ("ed25519", {}), ("ml-dsa-44", {}), ("composite-sig", {})):
+        for algorithm, params in (
+            ("rsa", {"length": 1024}),
+            ("dsa", {}),
+            ("dh", {"length": 512}),
+            ("ecdsa", {}),
+            ("ed25519", {}),
+            ("ml-dsa-44", {}),
+            ("composite-sig", {}),
+        ):
             for password in (None, "pw1234"):
                 with self.subTest(algorithm=algorithm, password=password):
                     key = generate_key(algorithm, **params)

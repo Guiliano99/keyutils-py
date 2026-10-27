@@ -51,6 +51,8 @@ SPDX-License-Identifier: Apache-2.0 -->
   instead of returning a key whose OID cannot be built.
 - Loading the traditional part of a composite key checks for trailing data and the RSA key size, and reports
   every failure as `InvalidKeyData`.
+- A malformed public key inside the `OneAsymmetricKey` of a composite key raises `InvalidKeyData` instead of the
+  bare `ValueError` of `cryptography`, and a composite KEM public key with the wrong RSA key size is rejected.
 
 - Malformed ML-DSA / ML-KEM key material (for example a public key of the wrong length) raises
   `InvalidKeyData` instead of the bare `ValueError` raised by `cryptography`.

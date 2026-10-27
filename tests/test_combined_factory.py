@@ -14,6 +14,7 @@ import unittest
 
 from cryptography.hazmat.primitives import serialization
 from pyasn1.codec.der import decoder
+from pyasn1.type import tag, univ
 from pyasn1_alt_modules import rfc5958
 
 from keyutils_py.enums import KeySaveType
@@ -102,6 +103,22 @@ class TestCombinedKeyFactory(unittest.TestCase):
         CombinedKeyFactory.validate_key_export_type(key, content, KeySaveType.SEED)
         with self.assertRaises((InvalidKeyData, ValueError)):
             CombinedKeyFactory.validate_key_export_type(key, content, KeySaveType.RAW)
+
+    def test_malformed_composite_public_key_is_invalid_key_data(self):
+        """GIVEN a composite key with a truncated public key in its `OneAsymmetricKey` / WHEN loaded / THEN it fails."""
+        for algorithm in ("composite-kem-ml-kem-768-x25519", "composite-sig-ml-dsa-44-ed25519"):
+            with self.subTest(algorithm=algorithm):
+                key = CombinedKeyFactory.generate_key_from_name(algorithm)
+                der = CombinedKeyFactory.save_private_key_one_asym_key(
+                    key, password=None, version=1, include_public_key=True
+                )
+                one_asym_key, _ = decoder.decode(der, asn1Spec=rfc5958.OneAsymmetricKey())
+                truncated = one_asym_key["publicKey"].asOctets()[:-1]
+                one_asym_key["publicKey"] = univ.BitString.fromOctetString(truncated).subtype(
+                    implicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatSimple, 1)
+                )
+                with self.assertRaises(InvalidKeyData):
+                    CombinedKeyFactory.load_private_key_from_one_asym_key(one_asym_key)
 
     def test_unsupported_key_type_raises(self):
         """GIVEN an unknown algorithm / WHEN a key is generated / THEN a ValueError lists the supported ones."""

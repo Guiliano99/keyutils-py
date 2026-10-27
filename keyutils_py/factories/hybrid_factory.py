@@ -493,10 +493,12 @@ class HybridKeyFactory(AbstractKeyFactory):
             name = COMPOSITE_SIG_OID_TO_NAME[oid]
             private_key = HybridKeyFactory._load_composite_sig_from_private_bytes(name, private_bytes)
             if public_bytes is not None:
-                spki = rfc5280.SubjectPublicKeyInfo()
-                spki["algorithm"]["algorithm"] = oid
-                spki["subjectPublicKey"] = univ.BitString.fromOctetString(public_bytes)
-                pub_key = HybridKeyFactory._load_composite_sig_from_spki(oid, public_bytes)
+                try:
+                    pub_key = HybridKeyFactory._load_composite_sig_from_spki(oid, public_bytes)
+                except (ValueError, InvalidKeyData) as e:
+                    raise InvalidKeyData(
+                        f"Failed to load the public key for composite-sig from `OneAsymmetricKey`: {e}"
+                    ) from e
                 if private_key.public_key() != pub_key:
                     raise MismatchingKey("Composite-sig public key does not match the private key.")
             return private_key
@@ -505,7 +507,12 @@ class HybridKeyFactory(AbstractKeyFactory):
             name = COMPOSITE_KEM_OID_2_NAME[oid]
             private_key = HybridKeyFactory._load_composite_kem_from_private_bytes(name, private_bytes)
             if public_bytes is not None:
-                pub_key = HybridKeyFactory._load_composite_kem_from_spki(oid, public_bytes)
+                try:
+                    pub_key = HybridKeyFactory._load_composite_kem_from_spki(oid, public_bytes)
+                except (ValueError, InvalidKeyData) as e:
+                    raise InvalidKeyData(
+                        f"Failed to load the public key for composite-kem from `OneAsymmetricKey`: {e}"
+                    ) from e
                 if private_key.public_key() != pub_key:
                     raise MismatchingKey("Composite-kem public key does not match the private key.")
             return private_key
@@ -670,6 +677,11 @@ class HybridKeyFactory(AbstractKeyFactory):
             trad_key = load_der_public_key(rest)
             if not isinstance(trad_key, RSAPublicKey):
                 raise InvalidKeyCombination(f"Expected RSA public key, got {type(trad_key)}")
+            size = int(trad_name.replace("rsa", ""))
+            if trad_key.key_size != size:
+                raise InvalidKeyCombination(
+                    f"Expected RSA key size {size}, but got {trad_key.key_size} for {trad_name}."
+                )
             trad_key = RSAEncapKey(trad_key)
         else:
             raise ValueError(f"Unsupported traditional key type: {trad_name}")

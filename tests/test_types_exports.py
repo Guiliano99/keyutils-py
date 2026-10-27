@@ -42,9 +42,7 @@ class TestTypesExports(unittest.TestCase):
         """GIVEN the `TYPE_CHECKING` imports / WHEN compared to the lazy table / THEN type checkers see every name."""
         tree = ast.parse(pathlib.Path(key_types.__file__).read_text())
         guarded = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.If) and getattr(node.test, "id", None) == "TYPE_CHECKING"
+            node for node in tree.body if isinstance(node, ast.If) and getattr(node.test, "id", None) == "TYPE_CHECKING"
         )
         imported = {alias.name for node in guarded.body if isinstance(node, ast.ImportFrom) for alias in node.names}
         self.assertEqual(imported, set(key_types._LAZY_MODULE_OF))

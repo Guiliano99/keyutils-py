@@ -102,6 +102,7 @@ from keyutils_py.oids import (
 from keyutils_py.types import DSAPrivateKey, DSAPublicKey, PrivateKey, PublicKey, TradPrivateKey
 from keyutils_py.utils import (
     OQS_AVAILABLE,
+    decode_key_structure,
     decode_pem_string,
     encode_to_der,
     is_stateful_hash_algorithm,
@@ -631,17 +632,15 @@ def load_private_key_from_one_asym_key(  # noqa: D417 for RF docs
 
     Raises:
     ------
-        - `BadAsn1Data`: If DER bytes do not decode to a `OneAsymmetricKey`.
-        - `InvalidKeyData`: If the key data is invalid.
+        - `InvalidKeyData`: If DER bytes do not decode to a `OneAsymmetricKey`, or the key data is invalid.
+        - `BadAsn1Data`: If the DER bytes have a remainder.
         - `BadAlg`: If the algorithm is not supported.
         - `MismatchingKey`: If the private key does not match the public key.
         - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
 
     """
     if isinstance(data, (bytes, bytearray)):
-        one_asym_key, rest = try_decode_pyasn1(bytes(data), rfc5958.OneAsymmetricKey())
-        if rest:
-            raise BadAsn1Data("OneAsymmetricKey")
+        one_asym_key = decode_key_structure(bytes(data), rfc5958.OneAsymmetricKey(), "OneAsymmetricKey")
     else:
         one_asym_key = data
     _require_oqs_for_oid(one_asym_key["privateKeyAlgorithm"]["algorithm"])
@@ -713,7 +712,7 @@ def load_private_key_from_file(  # noqa: D417 for RF docs
 
     try:
         return load_private_key_from_one_asym_key(der)
-    except BadAsn1Data as err:
+    except (BadAsn1Data, InvalidKeyData) as err:
         # Some files hold a traditional PKCS#1 `RSAPrivateKey` or SEC1 `ECPrivateKey` under the PKCS#8 label.
         try:
             return serialization.load_der_private_key(der, password=None)  # type: ignore[return-value]
@@ -734,7 +733,8 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
 
     Raises:
     ------
-          - `BadAsn1Data`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
+          - `InvalidKeyData`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
+          - `BadAsn1Data`: If the DER bytes have a remainder.
           - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown.
           - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
 
@@ -744,12 +744,7 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
 
     """
     if isinstance(data, (bytes, bytearray)):
-        try:
-            spki, rest = try_decode_pyasn1(bytes(data), rfc5280.SubjectPublicKeyInfo())
-        except BadAsn1Data as exc:
-            raise BadAsn1Data("The SubjectPublicKeyInfo structure was not valid.", overwrite=True) from exc
-        if rest:
-            raise BadAsn1Data("SubjectPublicKeyInfo")
+        spki = decode_key_structure(bytes(data), rfc5280.SubjectPublicKeyInfo(), "SubjectPublicKeyInfo")
     else:
         spki = data
     _require_oqs_for_oid(spki["algorithm"]["algorithm"])

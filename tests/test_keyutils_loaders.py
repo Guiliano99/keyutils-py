@@ -89,11 +89,10 @@ class TestLoadPublicKeyFromSpki(unittest.TestCase):
         with self.assertRaises(InvalidKeyData):
             load_public_key_from_spki(b"\x30\x03\x02\x01\x00")
 
-    def test_traditional_key_not_implemented(self):
-        """GIVEN an EC SPKI / WHEN loaded / THEN NotImplementedError, as in the file loaders."""
+    def test_traditional_key_is_loaded(self):
+        """GIVEN an EC SPKI / WHEN loaded / THEN the EC public key is returned."""
         pub = TradKeyFactory.generate_trad_key("ecdsa").public_key()
-        with self.assertRaises(NotImplementedError):
-            load_public_key_from_spki(_spki_der(pub))
+        self.assertEqual(load_public_key_from_spki(_spki_der(pub)).public_numbers(), pub.public_numbers())
 
 
 class TestCheckConsistency(unittest.TestCase):
