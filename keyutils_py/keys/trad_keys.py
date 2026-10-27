@@ -213,6 +213,16 @@ class DSAPrivateKey:
         """Return the matching public key."""
         return DSAPublicKey(self._key.public_key())
 
+    def __eq__(self, other: object) -> bool:
+        """Return True if ``other`` is a DSA private key with the same numbers."""
+        if not isinstance(other, DSAPrivateKey):
+            return NotImplemented
+        return (self.public_key(), self.x) == (other.public_key(), other.x)
+
+    def __hash__(self) -> int:
+        """Hash on the public key and the private value."""
+        return hash((self.public_key(), self.x))
+
     def sign(self, data: bytes, hash_alg: HashAlg = "sha256") -> bytes:
         """Sign ``data`` and return a DER-encoded ``Dss-Sig-Value``.
 

@@ -211,19 +211,66 @@ def decrypt_private_key_pkcs8_pem(pem_data: bytes, password: str | bytes) -> byt
     return decrypt_private_key_pkcs8(encrypted_der, password)
 
 
-def load_enc_key(password: str | bytes, data: bytes) -> bytes:
-    """Decrypt a PEM-armoured PKCS#8 ``ENCRYPTED PRIVATE KEY`` and return DER bytes.
+def _decrypt_legacy_pem(password: str | bytes, lines: list[bytes]) -> bytes:
+    """Decrypt a ``-----BEGIN <NAME> PRIVATE KEY-----`` block with ``Proc-Type``/``DEK-Info`` headers.
 
-    Only the modern PKCS#8 EncryptedPrivateKeyInfo format is supported in this
-    slim copy. The legacy ``Proc-Type/DEK-Info`` format used by older
-    cmp-test-suite keys is not supported here — write a fresh PEM with the
-    new format if you encounter one.
+    This is the format :func:`keyutils_py.keys.serialize_utils.prepare_enc_key_pem` writes: PBKDF2-HMAC-SHA256
+    (salt = IV, 100 000 iterations) and AES-CBC.
+    """
+    # pylint: disable-next=import-outside-toplevel  # serialize_utils imports this module
+    from keyutils_py.keys.serialize_utils import derive_and_encrypt_key
+
+    begin_line = lines[0].rstrip()
+    if not (begin_line.startswith(b"-----BEGIN ") and begin_line.endswith(b" PRIVATE KEY-----")):
+        raise ValueError(f"Invalid PEM format found in first line: {begin_line!r}")
+
+    idx = 1
+    if lines[idx].startswith(b"Proc-Type:"):
+        idx += 1
+
+    if not lines[idx].startswith(b"DEK-Info:"):
+        raise ValueError("Missing DEK-Info header")
+    _, dek_info = lines[idx].split(b": ", 1)
+    algo, iv_hex = dek_info.split(b",")
+    idx += 1
+    if algo not in (b"AES-256-CBC", b"AES-192-CBC", b"AES-128-CBC"):
+        raise ValueError(f"Unsupported encryption algorithm: {algo!r}")
+    iv = bytes.fromhex(iv_hex.decode("utf-8"))
+    if len(iv) != 16:
+        raise ValueError("IV must be 16 bytes long")
+
+    if idx < len(lines) and lines[idx].strip() == b"":
+        idx += 1
+
+    base64_lines = []
+    while idx < len(lines) and not lines[idx].startswith(b"-----END "):
+        base64_lines.append(lines[idx])
+        idx += 1
+
+    key_data, _ = derive_and_encrypt_key(
+        password=password.decode("utf-8") if isinstance(password, bytes) else password,
+        data=base64.b64decode(b"".join(base64_lines)),
+        decrypt=True,
+        iv=iv,
+    )
+    return key_data
+
+
+def load_enc_key(password: str | bytes, data: bytes) -> bytes:
+    """Decrypt a PEM-armoured encrypted private key and return the DER bytes.
+
+    Two formats are read: the PKCS#8 ``ENCRYPTED PRIVATE KEY`` (PBES2) block, and the
+    ``Proc-Type``/``DEK-Info`` block written by
+    :func:`keyutils_py.keys.serialize_utils.prepare_enc_key_pem`.
+
+    :param password: The password to decrypt with.
+    :param data: The PEM data.
+    :return: The decrypted key as DER bytes (a ``OneAsymmetricKey`` for the second format).
+    :raises ValueError: If the data is empty or is neither of the two formats.
     """
     lines = data.splitlines()
     if not lines:
         raise ValueError("Empty PEM data.")
-    if lines[0].rstrip() != b"-----BEGIN ENCRYPTED PRIVATE KEY-----":
-        raise ValueError(
-            "Only PKCS#8 EncryptedPrivateKeyInfo PEM is supported (expected `-----BEGIN ENCRYPTED PRIVATE KEY-----`)."
-        )
-    return decrypt_private_key_pkcs8_pem(data, password)
+    if lines[0].rstrip() == b"-----BEGIN ENCRYPTED PRIVATE KEY-----":
+        return decrypt_private_key_pkcs8_pem(data, password)
+    return _decrypt_legacy_pem(password, lines)

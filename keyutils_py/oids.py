@@ -664,6 +664,8 @@ KEY_CLASS_MAPPING = {
     "ECPublicKey": "ecdsa",
     "DSAPrivateKey": "dsa",
     "DSAPublicKey": "dsa",
+    "DHPrivateKey": "dh",
+    "DHPublicKey": "dh",
     "Ed25519PrivateKey": "ed25519",
     "Ed25519PublicKey": "ed25519",
     "Ed448PrivateKey": "ed448",
