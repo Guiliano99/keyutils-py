@@ -54,7 +54,8 @@ SPDX-License-Identifier: Apache-2.0 -->
 - A malformed public key inside the `OneAsymmetricKey` of a composite key raises `InvalidKeyData` instead of the
   bare `ValueError` of `cryptography`, and a composite KEM public key with the wrong RSA key size is rejected.
 - A composite signature public key whose RSA key does not have the size named by the OID (e.g. a 512-bit key under
-  a `rsa2048` OID) raises `InvalidKeyData` when its `SubjectPublicKeyInfo` is loaded.
+  a `rsa2048` OID) raises `InvalidKeyCombination` when its `SubjectPublicKeyInfo` is loaded, like the composite KEM
+  public key.
 - `check_consistency_sig_alg_id_and_key` accepts the pure SLH-DSA OIDs. `get_hash_from_oid` returned the hash of the
   parameter set for them, which made the check look for a pre-hash name that does not match the OID; it now returns
   `None` for an OID without an embedded hash, like for the pure ML-DSA OIDs. The unused `SLH_DSA_HASH_MAPPING` is removed.
