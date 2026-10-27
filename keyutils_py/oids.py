@@ -113,21 +113,6 @@ SLH_DSA_PRE_HASH_NAME_2_OID = {
     "slh-dsa-shake-256f-shake256": sig_algorithms_oid + (46,),
 }
 
-SLH_DSA_HASH_MAPPING = {
-    "slh-dsa-sha2-128s": "sha256",
-    "slh-dsa-sha2-128f": "sha256",
-    "slh-dsa-sha2-192s": "sha512",
-    "slh-dsa-sha2-192f": "sha512",
-    "slh-dsa-sha2-256s": "sha512",
-    "slh-dsa-sha2-256f": "sha512",
-    "slh-dsa-shake-128s": "shake128",
-    "slh-dsa-shake-128f": "shake128",
-    "slh-dsa-shake-192s": "shake256",
-    "slh-dsa-shake-192f": "shake256",
-    "slh-dsa-shake-256s": "shake256",
-    "slh-dsa-shake-256f": "shake256",
-}
-
 SLH_DSA_PRE_HASH_OID_2_NAME = {y: x for x, y in SLH_DSA_PRE_HASH_NAME_2_OID.items()}
 SLH_DSA_NAME_2_OID.update(SLH_DSA_PRE_HASH_NAME_2_OID)
 SLH_DSA_OID_2_NAME = {y: x for x, y in SLH_DSA_NAME_2_OID.items()}
@@ -317,8 +302,6 @@ def get_hash_from_oid(oid: univ.ObjectIdentifier) -> Optional[str]:
     if oid in SLH_DSA_PRE_HASH_OID_2_NAME:
         name = SLH_DSA_PRE_HASH_OID_2_NAME[oid]
         return name.rsplit("-", 1)[-1]
-    if oid in SLH_DSA_OID_2_NAME:
-        return SLH_DSA_HASH_MAPPING.get(SLH_DSA_OID_2_NAME[oid])
     return None
 
 
