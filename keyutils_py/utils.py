@@ -31,7 +31,27 @@ from base64 import b64decode
 from typing import Any, Union
 
 from keyutils_py.asn1utils import encode_to_der, try_decode_pyasn1
-from keyutils_py.exceptions import MissingOQSDependencyError
+from keyutils_py.exceptions import BadAsn1Data, InvalidKeyData, MissingOQSDependencyError
+
+
+def decode_key_structure(data: bytes, asn1_spec: Any, name: str) -> Any:
+    """Decode the DER ``data`` of a key structure (e.g. a ``OneAsymmetricKey``).
+
+    :param data: The DER encoded structure.
+    :param asn1_spec: The ``pyasn1`` specification to decode against.
+    :param name: The name of the structure, used in the error message.
+    :return: The decoded structure.
+    :raises InvalidKeyData: If the data cannot be decoded.
+    :raises BadAsn1Data: If the data has a remainder.
+    """
+    try:
+        decoded, rest = try_decode_pyasn1(data, asn1_spec)
+    except BadAsn1Data as exc:
+        raise InvalidKeyData(f"Failed to decode the `{name}`.") from exc
+    if rest:
+        raise BadAsn1Data(name)
+    return decoded
+
 
 # ---------------------------------------------------------------------------
 # PEM helpers

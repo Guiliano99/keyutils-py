@@ -55,7 +55,7 @@ from keyutils_py.types import (
     WrapperPrivateKey,
     XWingPrivateKey,
 )
-from keyutils_py.utils import try_decode_pyasn1
+from keyutils_py.utils import decode_key_structure
 
 
 class CombinedKeyFactory:
@@ -122,6 +122,9 @@ class CombinedKeyFactory:
 
         if PQKeyFactory.may_be_pq_alg(algorithm=algorithm):
             return PQKeyFactory.generate_pq_key(algorithm=algorithm)
+
+        if algorithm.lower().startswith(("composite-sig-", "composite-kem-", "chempat-")):
+            return HybridKeyFactory.generate_hybrid_key_by_name(algorithm)
 
         if algorithm in HybridKeyFactory.supported_algorithms():
             if kwargs.get("pq_key") is not None or kwargs.get("trad_key") is not None:
@@ -193,7 +196,7 @@ class CombinedKeyFactory:
         :return: The loaded public key.
         """
         if isinstance(spki, bytes):
-            spki = try_decode_pyasn1(spki, rfc5280.SubjectPublicKeyInfo())[0]
+            spki = decode_key_structure(spki, rfc5280.SubjectPublicKeyInfo(), "SubjectPublicKeyInfo")
 
         oid = spki["algorithm"]["algorithm"]
 
@@ -227,7 +230,7 @@ class CombinedKeyFactory:
         :raises MismatchingKey: If the private key does not match the public key.
         """
         if isinstance(data, bytes):
-            one_asym_key, _ = try_decode_pyasn1(data, rfc5958.OneAsymmetricKey())
+            one_asym_key = decode_key_structure(data, rfc5958.OneAsymmetricKey(), "OneAsymmetricKey")
         else:
             one_asym_key = data
 
