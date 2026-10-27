@@ -18,7 +18,7 @@ from keyutils_py import (
     prepare_spki,
     save_key,
 )
-from keyutils_py.exceptions import BadSigAlgID, InvalidKeyData
+from keyutils_py.exceptions import BadSigAlgID, InvalidKeyCombination, InvalidKeyData
 from keyutils_py.factories.trad_factory import TradKeyFactory
 from keyutils_py.keys.chempat_key import ChempatPublicKey
 from keyutils_py.keys.trad_keys import DSAPrivateKey
@@ -94,12 +94,12 @@ class TestLoadPublicKeyFromSpki(unittest.TestCase):
         with self.assertRaises(InvalidKeyData):
             load_public_key_from_spki(b"\x30\x03\x02\x01\x00")
 
-    def test_composite_sig_with_wrong_rsa_size_raises_invalid_key_data(self):
-        """GIVEN a composite signature key holding a 512-bit RSA key / WHEN its SPKI is loaded / THEN InvalidKeyData."""
+    def test_composite_sig_with_wrong_rsa_size_raises_invalid_key_combination(self):
+        """GIVEN a composite signature key with a 512-bit RSA key / WHEN its SPKI is loaded / THEN the combination fails."""
         key = generate_key(
             "composite-sig", trad_key=TradKeyFactory.generate_trad_key("bad_rsa_key"), pq_key=generate_key("ml-dsa-44")
         )
-        with self.assertRaises(InvalidKeyData):
+        with self.assertRaises(InvalidKeyCombination):
             load_public_key_from_spki(prepare_spki(key))
 
     def test_traditional_key_is_loaded(self):
