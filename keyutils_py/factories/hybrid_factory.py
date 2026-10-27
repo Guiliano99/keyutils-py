@@ -650,6 +650,9 @@ class HybridKeyFactory(AbstractKeyFactory):
             if rest_dec:
                 raise InvalidKeyData(f"Unexpected composite-sig traditional key data for {orig_name}")
             trad_key = load_der_public_key(rest)
+            size = int(trad_name.replace("-pss", "").replace("rsa", ""))
+            if not isinstance(trad_key, RSAPublicKey) or trad_key.key_size != size:
+                raise InvalidKeyData(f"Expected an RSA public key of {size} bits for {orig_name}.")
 
         if not isinstance(pq_key, MLDSAPublicKey):
             raise InvalidKeyData(f"Expected ML-DSA public key for {orig_name}, got: {type(pq_key)}")

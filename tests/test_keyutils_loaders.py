@@ -23,7 +23,12 @@ from keyutils_py.factories.trad_factory import TradKeyFactory
 from keyutils_py.keys.chempat_key import ChempatPublicKey
 from keyutils_py.keys.trad_keys import DSAPrivateKey
 from keyutils_py.keyutils import prepare_alg_id, prepare_sig_alg_id
-from keyutils_py.oids import PQ_NAME_2_OID
+from keyutils_py.oids import (
+    PQ_NAME_2_OID,
+    SLH_DSA_NAME_2_OID,
+    SLH_DSA_PRE_HASH_NAME_2_OID,
+    get_hash_from_oid,
+)
 from keyutils_py.utils import load_and_decode_pem_file, try_decode_pyasn1
 from pyasn1_alt_modules import rfc5958
 
@@ -89,6 +94,14 @@ class TestLoadPublicKeyFromSpki(unittest.TestCase):
         with self.assertRaises(InvalidKeyData):
             load_public_key_from_spki(b"\x30\x03\x02\x01\x00")
 
+    def test_composite_sig_with_wrong_rsa_size_raises_invalid_key_data(self):
+        """GIVEN a composite signature key holding a 512-bit RSA key / WHEN its SPKI is loaded / THEN InvalidKeyData."""
+        key = generate_key(
+            "composite-sig", trad_key=TradKeyFactory.generate_trad_key("bad_rsa_key"), pq_key=generate_key("ml-dsa-44")
+        )
+        with self.assertRaises(InvalidKeyData):
+            load_public_key_from_spki(prepare_spki(key))
+
     def test_traditional_key_is_loaded(self):
         """GIVEN an EC SPKI / WHEN loaded / THEN the EC public key is returned."""
         pub = TradKeyFactory.generate_trad_key("ecdsa").public_key()
@@ -110,6 +123,23 @@ class TestCheckConsistency(unittest.TestCase):
         check_consistency_sig_alg_id_and_key(prepare_sig_alg_id(self.rsa, hash_alg="sha256"), self.rsa.public_key())
         check_consistency_sig_alg_id_and_key(prepare_sig_alg_id(self.ec, hash_alg="sha256"), self.ec)
         check_consistency_sig_alg_id_and_key(prepare_alg_id(PQ_NAME_2_OID["ml-dsa-65"]), self.ml_dsa.public_key())
+
+    def test_slh_dsa_pure_and_pre_hash_oids(self):
+        """GIVEN an SLH-DSA key / WHEN checked against its pure and its pre-hash OID / THEN both are consistent."""
+        pure = {name: oid for name, oid in SLH_DSA_NAME_2_OID.items() if name not in SLH_DSA_PRE_HASH_NAME_2_OID}
+        for name, oid in pure.items():
+            with self.subTest(name=name):
+                self.assertIsNone(get_hash_from_oid(oid))
+                public_key = generate_key(name).public_key()
+                check_consistency_sig_alg_id_and_key(prepare_alg_id(oid), public_key)
+                pre_hash = next(pre for pre in SLH_DSA_PRE_HASH_NAME_2_OID if pre.startswith(name + "-"))
+                check_consistency_sig_alg_id_and_key(prepare_alg_id(SLH_DSA_PRE_HASH_NAME_2_OID[pre_hash]), public_key)
+
+    def test_slh_dsa_other_parameter_set_is_rejected(self):
+        """GIVEN an SLH-DSA key / WHEN checked against the OID of another parameter set / THEN BadSigAlgID."""
+        public_key = generate_key("slh-dsa-shake-128s").public_key()
+        with self.assertRaises(BadSigAlgID):
+            check_consistency_sig_alg_id_and_key(prepare_alg_id(SLH_DSA_NAME_2_OID["slh-dsa-sha2-128s"]), public_key)
 
     def test_mismatching_pairs(self):
         """GIVEN an alg_id for another key type / WHEN checked / THEN BadSigAlgID."""
