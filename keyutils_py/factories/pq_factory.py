@@ -16,14 +16,7 @@ from pyasn1.error import PyAsn1Error, ValueConstraintError
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc5280, rfc5958
 
-from keyutils_py.data_objects import (
-    MLDSA44PrivateKeyASN1,
-    MLDSA65PrivateKeyASN1,
-    MLDSA87PrivateKeyASN1,
-    MLKEM512PrivateKeyASN1,
-    MLKEM768PrivateKeyASN1,
-    MLKEM1024PrivateKeyASN1,
-)
+from keyutils_py.data_objects import ML_PRIVATE_KEY_STRUCTURES
 from keyutils_py.enums import KeySaveType
 from keyutils_py.exceptions import BadAlg, BadAsn1Data, InvalidKeyData, MismatchingKey
 from keyutils_py.factories.abstract_factory import AbstractKeyFactory
@@ -100,14 +93,7 @@ class PQKeyFactory(AbstractKeyFactory):
         "frodokem": FrodoKEMPrivateKey,
     }
 
-    _pq_name_2_ser_structures = {
-        "ml-dsa-44": MLDSA44PrivateKeyASN1,
-        "ml-dsa-65": MLDSA65PrivateKeyASN1,
-        "ml-dsa-87": MLDSA87PrivateKeyASN1,
-        "ml-kem-512": MLKEM512PrivateKeyASN1,
-        "ml-kem-768": MLKEM768PrivateKeyASN1,
-        "ml-kem-1024": MLKEM1024PrivateKeyASN1,
-    }
+    _pq_name_2_ser_structures = ML_PRIVATE_KEY_STRUCTURES
 
     @staticmethod
     def _starts_with_any(s: str, prefixes: List[str]) -> bool:

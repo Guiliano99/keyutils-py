@@ -16,13 +16,41 @@ SPDX-License-Identifier: Apache-2.0 -->
   (`failinfo`, `bit_num`, `get_failinfo()`, `get_error_details()`), as plain data. A consumer
   that builds protocol responses can use `KeyUtilsError` as the root of its own exception
   hierarchy and get one class identity for the errors raised in this package.
+- `CombinedKeyFactory` (`keyutils_py.factories`), the facade that creates, saves and loads every key type
+  (traditional, post-quantum, stateful hash-based and hybrid) by dispatching to the other factories.
+- `TradKeyFactory` can load and save keys: `load_public_key_from_spki`, `parse_trad_key_from_one_asym_key`,
+  `save_private_key_one_asym_key` and `prepare_invalid_trad_private_key`. DSA and DH keys are loaded as the
+  `DSAPrivateKey` / `DHPrivateKey` wrappers directly.
+- `generate_key`, `save_key`, `load_private_key_from_one_asym_key`, `load_public_key_from_spki` and
+  `load_private_key_from_file` in `keyutils_py.keyutils` work for every key type, not only the post-quantum and
+  hybrid ones, and `generate_key` accepts a `seed`. Their Robot Framework documentation is in the docstrings.
+- `load_private_key_from_file` takes the kind of key from the PEM label. It reads PKCS#8 (plain or
+  `ENCRYPTED PRIVATE KEY`), the `<NAME> PRIVATE KEY` blocks of post-quantum and hybrid keys, the traditional
+  OpenSSL `RSA`, `EC` and `DSA` blocks, and ignores text around the block (e.g. a license header).
+- `load_enc_key` reads the `Proc-Type`/`DEK-Info` encrypted PEM format that `prepare_enc_key_pem` writes, next to
+  PKCS#8, so existing key files can be loaded.
+- `HybridKeyFactory.get_all_kem_coms_as_dict` and `HybridKeyFactory.get_pq_and_trad_name` (formerly the private
+  `_get_pq_and_trad_name`) are public.
+- `DHPrivateKey` and `DHPublicKey` are in `KEY_CLASS_MAPPING`, so `get_key_name` knows them.
+- `DSAPrivateKey` defines `__eq__` and `__hash__`, like the other key wrappers.
 
 ## Changed
 
 - `InvalidKeyCombination` now derives from `BadAlg`, which it is a specialisation of.
 - `BadAsn1Data` accepts a keyword-only `failinfo`.
+- `generate_key` defaults to `rsa` instead of `hss`.
+- `PQPrivateKey.private_bytes` writes the standardised `Choice` for ML-DSA and ML-KEM keys (the seed if the key has
+  one, else the expanded key), the only form `PQKeyFactory` reads back. The name to structure mapping is
+  `keyutils_py.data_objects.ML_PRIVATE_KEY_STRUCTURES`.
+- FrodoKEM no longer requires `liboqs` at the `keyutils` functions, because `keyutils_py.fips.frodokem` is a
+  pure Python implementation.
 
 ## Fixed
+
+- Generating a composite key by name raises `InvalidKeyCombination` for a combination that is not allowed,
+  instead of returning a key whose OID cannot be built.
+- Loading the traditional part of a composite key checks for trailing data and the RSA key size, and reports
+  every failure as `InvalidKeyData`.
 
 - The pure-Python FrodoKEM implementation now works with `bitstring` 5: the remaining
   `BitArray(length=...)` calls in `__bytes_to_bit_array` and `decode`, and the removed

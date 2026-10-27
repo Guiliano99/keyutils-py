@@ -39,6 +39,7 @@ from cryptography.hazmat.primitives.serialization import (
 from pyasn1.type import tag, univ
 from pyasn1_alt_modules import rfc5280, rfc5958
 
+from keyutils_py.data_objects import ML_PRIVATE_KEY_STRUCTURES
 from keyutils_py.oids import PQ_NAME_2_OID
 from keyutils_py.utils import encode_to_der, try_decode_pyasn1
 
@@ -367,12 +368,29 @@ class PQPrivateKey(WrapperPrivateKey, ABC):
         # MUST be version 1; otherwise liboqs generates a wrong key.
         one_asym_key["version"] = 1
         one_asym_key["privateKeyAlgorithm"]["algorithm"] = self.get_oid()
-        one_asym_key["privateKey"] = univ.OctetString(self._export_private_key())
+        one_asym_key["privateKey"] = univ.OctetString(self._private_key_content())
         public_key_asn1 = univ.BitString(hexValue=self.public_key().public_bytes_raw().hex()).subtype(
             implicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatSimple, 1)
         )
         one_asym_key["publicKey"] = public_key_asn1
         return encode_to_der(one_asym_key)
+
+    def _private_key_content(self) -> bytes:
+        """Return the content of the ``privateKey`` field of the ``OneAsymmetricKey``.
+
+        ML-DSA and ML-KEM use the standardised ``Choice`` (the seed if the key has one, else the expanded
+        key), which is the only form :class:`~keyutils_py.factories.pq_factory.PQKeyFactory` reads back.
+        All other algorithms store the private key bytes directly.
+        """
+        structure_cls = ML_PRIVATE_KEY_STRUCTURES.get(self.name)
+        if structure_cls is None:
+            return self._export_private_key()
+        structure = structure_cls()
+        if self._seed:
+            structure["seed"] = self._seed
+        else:
+            structure["expandedKey"] = self._private_key_bytes
+        return encode_to_der(structure)
 
     def private_bytes_raw(self) -> bytes:
         """Return the raw PQ private-key bytes."""

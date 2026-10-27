@@ -10,6 +10,7 @@
 """Key factory classes for keyutils-py."""
 
 from keyutils_py.factories.abstract_factory import AbstractKeyFactory
+from keyutils_py.factories.combined_factory import CombinedKeyFactory
 from keyutils_py.factories.hybrid_factory import HybridKeyFactory
 from keyutils_py.factories.pq_factory import PQKeyFactory
 from keyutils_py.factories.pq_stfl_factory import PQStatefulSigFactory
@@ -17,6 +18,7 @@ from keyutils_py.factories.trad_factory import TradKeyFactory
 
 __all__ = [
     "AbstractKeyFactory",
+    "CombinedKeyFactory",
     "HybridKeyFactory",
     "PQKeyFactory",
     "PQStatefulSigFactory",

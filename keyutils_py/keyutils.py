@@ -31,6 +31,7 @@ import base64
 import logging
 import math
 import os
+import re
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
@@ -48,6 +49,7 @@ from keyutils_py.exceptions import (
     InvalidKeyData,
     MissingOQSDependencyError,
 )
+from keyutils_py.factories.combined_factory import CombinedKeyFactory
 from keyutils_py.factories.hybrid_factory import HybridKeyFactory
 from keyutils_py.factories.pq_factory import PQKeyFactory
 from keyutils_py.factories.pq_stfl_factory import PQStatefulSigFactory
@@ -60,10 +62,9 @@ from keyutils_py.keys.abstract_pq import (
 from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey
 from keyutils_py.keys.abstract_wrapper_keys import (
     AbstractCompositePrivateKey,
-    HybridPrivateKey,
 )
 from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigPublicKey
-from keyutils_py.keys.key_pyasn1_utils import decrypt_private_key_pkcs8_pem
+from keyutils_py.keys.key_pyasn1_utils import encrypt_private_key_pkcs8_pem, load_enc_key
 from keyutils_py.keys.stateful_sig_keys import (
     HSS_ALGORITHM_DETAILS,
     HSSPrivateKey,
@@ -98,10 +99,10 @@ from keyutils_py.oids import (
     may_return_oid_to_name,
     sha_alg_name_to_oid,
 )
-from keyutils_py.types import DSAPrivateKey, DSAPublicKey, PrivateKey, PublicKey
+from keyutils_py.types import DSAPrivateKey, DSAPublicKey, PrivateKey, PublicKey, TradPrivateKey
 from keyutils_py.utils import (
-    NOT_IMPLEMENTED_HINT,
     OQS_AVAILABLE,
+    decode_pem_string,
     encode_to_der,
     is_stateful_hash_algorithm,
     is_xmss_or_xmssmt,
@@ -386,24 +387,102 @@ def decode_alg_id_parameters(alg_id: rfc5280.AlgorithmIdentifier) -> rfc5280.Alg
 # ---------------------------------------------------------------------------
 
 
-def generate_key(algorithm: str = "hss", **params):
-    """Generate a private key.
+def generate_key(algorithm: str = "rsa", **params):  # noqa: D417 for RF docs
+    """Generate a private key based on the specified algorithm.
 
-    See the package README for the algorithm name reference.
+    Post-quantum signature algorithms are not based on hash versions alone but can be specified within the
+    signing functions.
+
+    Arguments:
+    ---------
+        - `algorithm`: The cryptographic algorithm to use for key generation. Defaults to "rsa".
+        - `by_name`: If True, the key is generated based on the algorithm name. Defaults to `False`.
+        (e.g., "composite-sig-ml-dsa-44-ed25519") The parameters are ignored in this case.
+        - `seed`: If set, the key is generated from this seed (or private value) instead of at random.
+        - `**params`: Additional parameters specific to the algorithm.
+
+    Traditional algorithms:
+    ---------------------
+        - "rsa": RSA.
+        - "dsa": DSA.
+        - "ecdsa" or "ecdh": Elliptic Curve.
+        - "ed25519", "ed448", "x25519", "x448": the Edwards and Montgomery curves.
+        - "dh": Diffie-Hellman.
+        - "bad_rsa_key": RSA with a bit size of 512.
+        - "rsa-kem": RSA-KEM RFC9690 (either by directly using the algorithm name or with trad_key=${key}).
+
+    PQ Signature algorithms:
+    ------------------------
+        - "ml-dsa-44", "ml-dsa-65", "ml-dsa-87"
+        - "slh-dsa" or specified version.
+        - "falcon512", "falcon1024", "falcon-padded-512", "falcon-padded-1024"
+
+    KEM algorithms:
+    ---------------
+        - "ml-kem-512", "ml-kem-768", "ml-kem-1024"
+        - "sntrup761"
+        - "mceliece-348864", "mceliece-460896", "mceliece-6688128", "mceliece-6960119"
+        - "frodokem-976-aes", "frodokem-976-shake", "frodokem-1344-aes", "frodokem-1344-shake"
+
+    Stateful hash-based signature algorithms:
+    -----------------------------------------
+        - "hss", "xmss", "xmssmt" or a specified version.
+
+    Hybrid algorithms:
+    ------------------
+        - "xwing"
+        - "composite-sig"
+        - "composite-kem"
+        - "chempat"
+
+    Additional Parameters:
+    ----------------------
+        - For "rsa" and "dsa":
+            - length (int, str): The length of the key to generate, in bits. Default is 2048.
+        - For "ecdsa" or "ecdh":
+            - curve (str): Curve name, see `cryptography.hazmat.primitives.asymmetric.ec`. Default is `secp256r1`.
+        - For "dh":
+            - g (int): The generator for DH key generation. Default is 2.
+            - secret_scalar (str, int): the private key value for DH key generation. If not provided, one is generated.
+            - length (int, str): The length of the modulus to generate if `p` is not provided. Default is 2048.
+
+    Additional Hybrid Parameters:
+    ----------------------------
+        - pq_name (str): The name of the post-quantum algorithm.
+        - trad_param (str): The name of the traditional algorithm. needs to be `ecdh` for
+        composite-kem/chempat and
+        `ecdsa` for composite-sig.
+        - pq_key (PQPrivateKey): The post-quantum private key.
+        - trad_key (ECDHPrivateKey or RSA): The traditional private key.
+
+    Additional PQ parameters:
+    ------------------------
+        - `levels`(int): To set the levels for an HSS private key.
+
+    Returns:
+    -------
+        - The generated private key.
+
+    Raises:
+    ------
+        - `ValueError` if the specified algorithm is not supported or if invalid parameters are provided.
+        - `MissingOQSDependencyError` if the algorithm needs `liboqs`, which is not installed.
+
+    Examples:
+    --------
+    | ${private_key}= | Generate Key | algorithm=rsa | length=2048 |
+    | ${private_key}= | Generate Key | algorithm=dh | length=2048 |
+    | ${private_key}= | Generate Key | algorithm=ecdsa | curve=secp384r1 |
+
     """
-    from keyutils_py.utils import is_hybrid_algorithm, is_supported_pq_algorithm  # avoid load-order issues
-
     name = algorithm.lower()
-    if is_hybrid_algorithm(name):
-        if name in HybridKeyFactory.supported_algorithms():
-            return HybridKeyFactory.generate_hybrid_key(name, **params)
-        return HybridKeyFactory.generate_hybrid_key_by_name(name)
-    if not is_supported_pq_algorithm(name):
-        raise NotImplementedError(f"{algorithm!r}: {NOT_IMPLEMENTED_HINT}")
     require_oqs_if_needed(name)
-    if is_stateful_hash_algorithm(name):
-        return PQStatefulSigFactory.generate_pq_stateful_key(name, **params)
-    return PQKeyFactory.generate_key_by_name(name, **params)
+
+    seed = params.pop("seed", None)
+    if seed is not None:
+        return CombinedKeyFactory.generate_key_from_seed(name, seed=seed, curve=params.get("curve"))
+
+    return CombinedKeyFactory.generate_key(name, **params)
 
 
 def _curve_oid_to_name(oid: univ.ObjectIdentifier) -> str:
@@ -476,141 +555,205 @@ def generate_key_based_on_alg_id(alg_id: rfc5280.AlgorithmIdentifier) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def save_key(
-    key,
+def save_key(  # noqa: D417 undocumented-params
+    key: PrivateKey,
     path: str,
     password: Optional[str] = "11111",
     save_type: str = "seed",
 ) -> None:
-    """Write ``key`` to ``path`` as a (optionally encrypted) PEM file."""
-    if not isinstance(key, (PQHashStatefulSigPrivateKey, PQSignaturePrivateKey, PQKEMPrivateKey, HybridPrivateKey)):
-        raise NotImplementedError(f"{type(key).__name__}: {NOT_IMPLEMENTED_HINT}")
+    """Save a private key to a file, optionally encrypting it with a passphrase.
 
-    if password:
-        enc_alg: Union[serialization.NoEncryption, serialization.BestAvailableEncryption] = (
-            serialization.BestAvailableEncryption(password.encode("utf-8"))
-        )
-    else:
-        enc_alg = serialization.NoEncryption()
+    Arguments:
+    ---------
+        - `key`: The private key object to save.
+        - `path`: The file path where the key will be saved.
+        - `password`: Optional passphrase to encrypt the key. If None or empty, save without encryption.
+        Defaults to "11111". An encrypted key is a PKCS#8 `ENCRYPTED PRIVATE KEY`.
+        - `save_type`: How to save the ML-DSA or ML-KEM key. Can be "seed", "raw" or "seed_and_raw".
+        Defaults to "seed".
 
-    if isinstance(key, HybridPrivateKey):
-        der = HybridKeyFactory.save_private_key_one_asym_key(
-            private_key=key,
-            save_type=save_type,
-            version=1,
-        )
-    elif isinstance(key, PQHashStatefulSigPrivateKey):
-        del save_type  # ignored
+    Raises:
+    ------
+        - `TypeError` if the provided key is not a valid private key object.
+
+    Examples:
+    --------
+    | Save Key | ${key} | /path/to/save/key.pem | password123 |
+
+    """
+    if isinstance(key, (TradPrivateKey, PQHashStatefulSigPrivateKey)):
+        # The standard PKCS#8 encoding is all these keys have, `save_type` does not apply.
         data = key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=enc_alg,
+            encryption_algorithm=(
+                serialization.BestAvailableEncryption(password.encode("utf-8"))
+                if password
+                else serialization.NoEncryption()
+            ),
         )
-        with open(path, "wb") as fh:
-            fh.write(data)
-        return
     else:
-        require_oqs_if_needed(key.name)
-        der = PQKeyFactory.save_private_key_one_asym_key(
+        if isinstance(key, (PQSignaturePrivateKey, PQKEMPrivateKey)):
+            require_oqs_if_needed(key.name)
+        der = CombinedKeyFactory.save_private_key_one_asym_key(
             private_key=key,
+            password=None,
             save_type=save_type,
             version=1,
+            encoding=serialization.Encoding.DER,
         )
-
-    if password:
-        from keyutils_py.keys.key_pyasn1_utils import (
-            encrypt_private_key_pkcs8_pem,  # pylint: disable=import-outside-toplevel
-        )
-
-        data = encrypt_private_key_pkcs8_pem(private_key_der=der, password=password)
-    else:
-        body = "\n".join(textwrap.wrap(base64.b64encode(der).decode("ascii"), 64))
-        data = (f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n").encode("ascii")
+        if password:
+            data = encrypt_private_key_pkcs8_pem(private_key_der=der, password=password)
+        else:
+            body = "\n".join(textwrap.wrap(base64.b64encode(der).decode("ascii"), 64))
+            data = (f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n").encode("ascii")
 
     with open(path, "wb") as fh:
         fh.write(data)
 
 
-def _load_private_key_from_one_asym_key(one_asym_key: rfc5958.OneAsymmetricKey):
-    alg_id = one_asym_key["privateKeyAlgorithm"]
-    oid = alg_id["algorithm"]
-    if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-        require_oqs_if_needed(PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid])
-        return PQStatefulSigFactory.load_private_key_from_one_asym_key(one_asym_key)
-    if oid in PQ_OID_2_NAME:
-        require_oqs_if_needed(PQ_OID_2_NAME[oid])
-        return PQKeyFactory.from_one_asym_key(one_asym_key)
-    if HybridKeyFactory.is_hybrid_oid(oid):
-        return HybridKeyFactory.from_one_asym_key(one_asym_key)
-    if oid == rfc5480.id_dsa:
-        return DSAPrivateKey.load(encode_to_der(one_asym_key))
-    raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
+def _require_oqs_for_oid(oid: univ.ObjectIdentifier) -> None:
+    """Raise :class:`MissingOQSDependencyError` if the algorithm of ``oid`` needs a missing liboqs."""
+    name = PQ_STATEFUL_HASH_SIG_OID_2_NAME.get(oid) or PQ_OID_2_NAME.get(oid)
+    if name is not None:
+        require_oqs_if_needed(name)
 
 
-def load_private_key_from_one_asym_key(data: Union[bytes, rfc5958.OneAsymmetricKey]):
+def load_private_key_from_one_asym_key(  # noqa: D417 for RF docs
+    data: Union[bytes, rfc5958.OneAsymmetricKey], must_be_version_2: bool = False
+):
     """Load a private key from a ``OneAsymmetricKey`` (DER bytes or a decoded structure).
 
-    :raises InvalidKeyData: If DER bytes do not decode to a ``OneAsymmetricKey``.
-    :raises NotImplementedError: For key types the loaders do not support.
+    Arguments:
+    ---------
+        - `data`: The DER encoded or decoded `OneAsymmetricKey`.
+        - `must_be_version_2`: If True, the key must be version 2 (include the public key). Defaults to `False`.
+
+    Raises:
+    ------
+        - `BadAsn1Data`: If DER bytes do not decode to a `OneAsymmetricKey`.
+        - `InvalidKeyData`: If the key data is invalid.
+        - `BadAlg`: If the algorithm is not supported.
+        - `MismatchingKey`: If the private key does not match the public key.
+        - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
+
     """
     if isinstance(data, (bytes, bytearray)):
-        try:
-            one_asym_key, rest = try_decode_pyasn1(bytes(data), rfc5958.OneAsymmetricKey())
-        except Exception as exc:  # noqa: BLE001
-            raise InvalidKeyData("Failed to decode OneAsymmetricKey.") from exc
+        one_asym_key, rest = try_decode_pyasn1(bytes(data), rfc5958.OneAsymmetricKey())
         if rest:
             raise BadAsn1Data("OneAsymmetricKey")
     else:
         one_asym_key = data
-    return _load_private_key_from_one_asym_key(one_asym_key)
+    _require_oqs_for_oid(one_asym_key["privateKeyAlgorithm"]["algorithm"])
+    return CombinedKeyFactory.load_private_key_from_one_asym_key(one_asym_key, must_be_version_2)
 
 
-def load_private_key_from_file(filepath: str, password: Optional[str] = "11111"):
-    """Load a private key from a PEM file (PKCS#8 or plain)."""
+_PEM_PRIVATE_KEY = re.compile(
+    rb"-----BEGIN ((?:[A-Za-z0-9-]+ )?)PRIVATE KEY-----(.*?)-----END \1PRIVATE KEY-----", re.DOTALL
+)
+
+
+def load_private_key_from_file(  # noqa: D417 for RF docs
+    filepath: str, password: Optional[str] = "11111"
+):
+    """Load a private key from a PEM file.
+
+    The kind of key is taken from the PEM label: a PKCS#8 `PRIVATE KEY` or `ENCRYPTED PRIVATE KEY`, a
+    `<NAME> PRIVATE KEY` block of a post-quantum or hybrid key (encrypted with `Proc-Type`/`DEK-Info` headers
+    or not), or the traditional OpenSSL `RSA PRIVATE KEY`, `EC PRIVATE KEY` and `DSA PRIVATE KEY`.
+    Lines outside of the PEM block (e.g. a license header) are ignored.
+
+    Arguments:
+    ---------
+        - `filepath`: The path to the file containing the PEM-encoded key.
+        - `password`: The password to decrypt the key, if it is encrypted. Defaults to "11111".
+          (`x448`, `x25519` and the ed versions do not support encryption.)
+
+    Returns:
+    -------
+        - An instance of the loaded key, such as `RSAPrivateKey`, `X448PrivateKey`, or `MLDSAPrivateKey`.
+
+    Raises:
+    ------
+        - `FileNotFoundError` if the file does not exist.
+        - `InvalidKeyData` if the file contains no PEM private key.
+        - `ValueError` if the key is encrypted and no password was given.
+
+    Examples:
+    --------
+    | ${key}= | Load Private Key From File | /path/to/key.pem | password123 |
+    | ${x448_key}= | Load Private Key From File | /path/to/x448_key.pem |
+
+    """
     with open(filepath, "rb") as fh:
         raw = fh.read()
-    if b"-----BEGIN ENCRYPTED PRIVATE KEY-----" in raw:
+
+    match = _PEM_PRIVATE_KEY.search(raw)
+    if match is None:
+        raise InvalidKeyData(f"No PEM private key found in {filepath}.")
+    block, label = match.group(0), match.group(1).strip()
+    is_openssl_encrypted = b"Proc-Type: 4,ENCRYPTED" in block
+
+    if label == b"DSA":
+        return DSAPrivateKey.load(block, password)
+    if label in (b"RSA", b"EC"):
+        # The traditional OpenSSL formats, which only `cryptography` reads (encrypted with OpenSSL's own scheme).
+        return serialization.load_pem_private_key(
+            block, password=password.encode("utf-8") if password and is_openssl_encrypted else None
+        )
+
+    if label == b"ENCRYPTED" or is_openssl_encrypted:
         if password is None:
-            raise ValueError("Password required to decrypt PKCS#8 encrypted private key.")
-        der = decrypt_private_key_pkcs8_pem(pem_data=raw, password=password)
-    else:
-        der = load_and_decode_pem_file(filepath)
+            raise ValueError("A password is required to decrypt the encrypted private key.")
+        return load_private_key_from_one_asym_key(load_enc_key(password=password, data=block))
+
+    der = decode_pem_string(block)
+    if label:
+        return load_private_key_from_one_asym_key(der)
+
     try:
-        one_asym_key, rest = try_decode_pyasn1(der, rfc5958.OneAsymmetricKey())
-    except Exception as exc:  # noqa: BLE001
-        raise InvalidKeyData(f"Failed to decode OneAsymmetricKey from {filepath}.") from exc
-    if rest:
-        raise BadAsn1Data("OneAsymmetricKey")
-    return _load_private_key_from_one_asym_key(one_asym_key)
+        return load_private_key_from_one_asym_key(der)
+    except BadAsn1Data as err:
+        # Some files hold a traditional PKCS#1 `RSAPrivateKey` or SEC1 `ECPrivateKey` under the PKCS#8 label.
+        try:
+            return serialization.load_der_private_key(der, password=None)  # type: ignore[return-value]
+        except ValueError:
+            raise err from None
 
 
-def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
-    """Load a public key from a ``SubjectPublicKeyInfo`` (DER bytes or a decoded structure).
+def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):  # noqa: D417 for RF docs
+    """Load a public key from a DER-encoded SubjectPublicKeyInfo structure.
 
-    :raises InvalidKeyData: If DER bytes do not decode to a ``SubjectPublicKeyInfo``.
-    :raises NotImplementedError: For key types the loaders do not support.
+    Arguments:
+    ---------
+         - `data`: DER-encoded SubjectPublicKeyInfo structure or a pyasn1 `SubjectPublicKeyInfo` object.
+
+    Returns:
+    -------
+        - The loaded public key.
+
+    Raises:
+    ------
+          - `BadAsn1Data`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
+          - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown.
+          - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
+
+    Examples:
+    --------
+    ${public_key}= | Load Public Key From Spki| ${data} |
+
     """
     if isinstance(data, (bytes, bytearray)):
         try:
             spki, rest = try_decode_pyasn1(bytes(data), rfc5280.SubjectPublicKeyInfo())
-        except Exception as exc:  # noqa: BLE001
-            raise InvalidKeyData("Failed to decode SubjectPublicKeyInfo.") from exc
+        except BadAsn1Data as exc:
+            raise BadAsn1Data("The SubjectPublicKeyInfo structure was not valid.", overwrite=True) from exc
         if rest:
             raise BadAsn1Data("SubjectPublicKeyInfo")
     else:
         spki = data
-    oid = spki["algorithm"]["algorithm"]
-    if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-        require_oqs_if_needed(PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid])
-        return PQStatefulSigFactory.load_public_key_from_spki(spki)
-    if oid in PQ_OID_2_NAME:
-        require_oqs_if_needed(PQ_OID_2_NAME[oid])
-        return PQKeyFactory.load_public_key_from_spki(spki)
-    if HybridKeyFactory.is_hybrid_oid(oid):
-        return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
-    if oid == rfc5480.id_dsa:
-        return DSAPublicKey.load(encode_to_der(spki))
-    raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
+    _require_oqs_for_oid(spki["algorithm"]["algorithm"])
+    return CombinedKeyFactory.load_public_key_from_spki(spki)
 
 
 def load_public_key_from_file(filepath: str):

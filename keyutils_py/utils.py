@@ -121,11 +121,12 @@ NOT_IMPLEMENTED_HINT = (
     "Algorithm not supported by keyutils-py. The package covers PQ "
     "(ML-DSA / ML-KEM / SLH-DSA / Falcon / FrodoKEM / McEliece / SNTRUP761), "
     "PQ stateful-hash (HSS / LMS / XMSS / XMSSMT), and hybrid keys "
-    "(composite-sig / composite-kem / chempat / xwing). Traditional-only "
-    "keys are not supported here."
+    "(composite-sig / composite-kem / chempat / xwing), and the traditional "
+    "keys (RSA / DSA / EC / EdDSA / X25519 / X448 / DH) they are combined with."
 )
 
-_OQS_REQUIRED_PREFIXES = ("falcon-", "mceliece-", "frodokem-")
+# FrodoKEM is not listed: keyutils_py.fips.frodokem is a pure Python implementation.
+_OQS_REQUIRED_PREFIXES = ("falcon-", "mceliece-")
 
 
 def algorithm_needs_oqs(algorithm: str) -> bool:
