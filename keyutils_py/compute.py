@@ -41,7 +41,6 @@ from keyutils_py.exceptions import (
     BadAsn1Data,
     BadDataFormat,
     BadSigAlgID,
-    BadSigAlgIDParams,
     InvalidKeyCombination,
 )
 from keyutils_py.keys.abstract_pq import (
@@ -65,7 +64,6 @@ from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigP
 from keyutils_py.keys.trad_kem_keys import DHKEMPublicKey, RSADecapKey, RSAEncapKey
 from keyutils_py.oids import (
     CURVE_2_COFACTORS,
-    SIG_ALG_OID_2_PARAMETERS_SPEC,
     SigAlgInfo,
     get_hash_from_oid,
     get_sig_alg_info,
@@ -80,58 +78,6 @@ from keyutils_py.utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Signature parameter validation (catalog-driven, exposed via keyutils.validate_sig_alg_id)
-# ---------------------------------------------------------------------------
-
-
-def _is_parameters_null(params_field) -> bool:
-    """Return True if the AlgorithmIdentifier ``parameters`` field carries ASN.1 NULL."""
-    if not params_field.isValue:
-        return False
-    if isinstance(params_field, univ.Null):
-        return True
-    if hasattr(params_field, "asOctets"):
-        return params_field.asOctets() == b"\x05\x00"
-    return False
-
-
-def _validate_sig_alg_id(alg_id: rfc9480.AlgorithmIdentifier) -> None:
-    """Catalog-driven validator; called by :func:`keyutils.validate_sig_alg_id`."""
-    from keyutils_py.enums import SigAlgParametersSpec  # local import to keep enum module light
-
-    oid = alg_id["algorithm"]
-    spec = SIG_ALG_OID_2_PARAMETERS_SPEC.get(oid)
-    if spec is None:
-        raise BadAlg(f"Unsupported signature AlgorithmIdentifier OID: {oid}.")
-
-    has_value = alg_id["parameters"].isValue
-
-    if spec is SigAlgParametersSpec.MUST_BE_ABSENT:
-        if has_value:
-            raise BadSigAlgIDParams(
-                f"AlgorithmIdentifier `parameters` must be absent for {oid}; got {alg_id['parameters'].prettyPrint()}"
-            )
-        return
-    if spec is SigAlgParametersSpec.MUST_BE_NULL:
-        if not _is_parameters_null(alg_id["parameters"]):
-            raise BadSigAlgIDParams(
-                f"AlgorithmIdentifier `parameters` must be NULL for {oid}; "
-                f"got {alg_id['parameters'].prettyPrint() if has_value else '<absent>'}"
-            )
-        return
-    if spec is SigAlgParametersSpec.MUST_BE_RSASSA_PSS_PARAMS:
-        if not has_value:
-            raise BadSigAlgIDParams(f"RSASSA-PSS requires `parameters` to be present (OID {oid}).")
-        if not isinstance(alg_id["parameters"], rfc4055.RSASSA_PSS_params):
-            try:
-                try_decode_pyasn1(alg_id["parameters"], rfc4055.RSASSA_PSS_params())
-            except Exception as exc:
-                raise BadSigAlgIDParams(f"RSASSA-PSS `parameters` is not a valid RSASSA-PSS-params: {exc}") from exc
-        return
-    raise NotImplementedError(f"Unsupported SigAlgParametersSpec: {spec!r}")
 
 
 # ---------------------------------------------------------------------------
