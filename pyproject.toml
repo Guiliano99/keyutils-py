@@ -68,7 +68,7 @@ exclude = ["tests/"]
 skip = "*keyutils_py/data*,*keyutils_py/fips*,*.pem,*.venv*,*uv.lock,*.egg-info,*.ruff_cache,*.git"
 # `sHat`, `thi` etc. are short mathematical variable identifiers from the FIPS
 # reference implementations and may appear in documentation citing them.
-ignore-words-list = "PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi,disjointness"
+ignore-words-list = "MacRow,PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi,disjointness"
 
 [tool.pylint.main]
 ignore = ["tests"]
