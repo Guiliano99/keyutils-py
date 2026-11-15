@@ -127,6 +127,8 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 ## Fixed
 
+- ML-DSA verification (`MLDSAPublicKey.verify`) raises `InvalidSignature` for a signature of the wrong length. The
+  pre-hash (HashML-DSA) path accepted a signature with trailing bytes and raised `IndexError` for a short or empty one.
 - Generating a composite key by name raises `InvalidKeyCombination` for a combination that is not allowed,
   instead of returning a key whose OID cannot be built.
 - Loading the traditional part of a composite key checks for trailing data and the RSA key size, and reports

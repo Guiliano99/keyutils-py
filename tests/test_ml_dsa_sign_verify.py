@@ -78,5 +78,34 @@ class TestMLDSASignVerify(unittest.TestCase):
         verify_signature(self.key.public_key(), signature, prehashed_data, ctx=self.ctx, hash_alg="sha512", use_pre_hash=True)
 
 
+class TestMLDSAMalformedSignatureLength(unittest.TestCase):
+    """A signature of the wrong length is an invalid signature (FIPS 204 Algorithm 3), in pure and pre-hash mode."""
+
+    NAMES = ("ml-dsa-44", "ml-dsa-65", "ml-dsa-87")
+
+    def test_wrong_length_signature_is_invalid(self):
+        """
+        GIVEN a genuine ML-DSA signature of each parameter set, pure and with SHA-512 pre-hash.
+        WHEN verifying it with a byte appended, with bytes removed, and as an empty signature,
+        THEN every variant raises InvalidSignature (no IndexError, no acceptance of trailing bytes).
+        """
+        data = b"keyutils-py wrong length signatures"
+        for name in self.NAMES:
+            key = generate_key(name)
+            for hash_alg in (None, "sha512"):
+                signature = sign_data(data, key, hash_alg=hash_alg)
+                verify_signature(key.public_key(), signature, data, hash_alg=hash_alg)
+                for label, candidate in (
+                    ("one byte appended", signature + b"\x00"),
+                    ("two bytes appended", signature + b"AA"),
+                    ("one byte removed", signature[:-1]),
+                    ("five bytes removed", signature[:-5]),
+                    ("empty", b""),
+                ):
+                    with self.subTest(name=name, hash_alg=hash_alg, variant=label):
+                        with self.assertRaises(InvalidSignature):
+                            verify_signature(key.public_key(), candidate, data, hash_alg=hash_alg)
+
+
 if __name__ == "__main__":
     unittest.main()

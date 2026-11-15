@@ -133,6 +133,11 @@ class MLDSAPublicKey(PQSignaturePublicKey):
 
         hash_alg = self.check_hash_alg(hash_alg=hash_alg, allow_failure=False)
 
+        # FIPS 204 Algorithm 3: a signature of the wrong length is invalid. The pure-Python pre-hash path would
+        # otherwise accept trailing bytes and fail with an IndexError on a short signature.
+        if len(signature) != self.sig_size:
+            raise InvalidSignature()
+
         if hash_alg is None and not is_prehashed and self._native_key is not None:
             self._native_key.verify(signature, data, ctx if ctx else None)
             return None
