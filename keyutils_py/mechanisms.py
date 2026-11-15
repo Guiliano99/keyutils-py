@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from pyasn1.codec.der import encoder
 from pyasn1.error import PyAsn1Error
@@ -40,19 +40,37 @@ from pyasn1.type import univ
 from pyasn1_alt_modules import rfc3565, rfc5084, rfc5280, rfc8018, rfc8702, rfc9044, rfc9480
 
 from keyutils_py import primitives
-from keyutils_py._algs import CONTENT_BY_OID, KDF_BY_OID, MAC_BY_OID, WRAP_BY_OID, ContentRow, KdfRow, MacRow, WrapRow
+from keyutils_py._algs import (
+    CONTENT_BY_OID,
+    CONTENT_OID,
+    KDF_BY_OID,
+    KDF_OID,
+    MAC_BY_OID,
+    MAC_OID,
+    PRF_OID,
+    WRAP_BY_OID,
+    WRAP_OID,
+    AlgInfo,
+    ContentRow,
+    KdfRow,
+    MacRow,
+    WrapRow,
+)
 from keyutils_py.asn1utils import try_decode_pyasn1
 from keyutils_py.exceptions import BadAlg, BadAlgParams, BadAsn1Data, IntegrityError
 from keyutils_py.keys.key_pyasn1_utils import MAX_PBKDF2_ITERATIONS
 from keyutils_py.oids import _HASH_OID_2_NAME, _HASH_REGISTRY, _is_parameters_null
 
 __all__ = [
+    "AlgInfo",
+    "AlgKind",
     "Encrypted",
     "compute_mac",
     "decrypt_content",
     "encrypt_content",
     "kdf_derive",
     "mac_key_length",
+    "make_alg_id",
     "unwrap_cek",
     "verify_mac",
     "wrap_cek",
@@ -585,3 +603,182 @@ def decrypt_content(
     if len(tag) != tag_length:
         raise BadAlgParams(f"The tag has {len(tag)} octets, `aes-ICVlen` of the parameters says {tag_length}.")
     return primitives.aes_gcm_decrypt(cek, nonce, ciphertext, tag, aad)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Building an AlgorithmIdentifier
+# ---------------------------------------------------------------------------------------------------------------
+
+AlgKind = Literal["kdf", "mac", "wrap", "content", "kari", "key_transport"]
+"""The kinds of algorithm of :func:`make_alg_id`; only the first four have builders."""
+
+
+def _make(oid: univ.ObjectIdentifier, parameters: Any = None) -> AlgId:
+    """Return an ``AlgorithmIdentifier`` whose parameters are the DER of ``parameters``, or absent."""
+    alg_id = AlgId()
+    alg_id["algorithm"] = oid
+    if parameters is not None:
+        alg_id["parameters"] = univ.Any(encoder.encode(parameters))
+    return alg_id
+
+
+def _oid_of(index: Any, key: Any, what: str) -> univ.ObjectIdentifier:
+    """Return the OID of a table fact, or raise ``BadAlg``."""
+    try:
+        return index[key]
+    except KeyError:
+        raise BadAlg(f"No OID for {what} in the algorithm tables.") from None
+
+
+def _hash_alg_id(hash_name: str) -> AlgId:
+    """Return the identifier of a hash: NULL parameters for SHA-1 and SHA-2 as RFC 9690 Appendix D writes them."""
+    if hash_name not in _HASH_REGISTRY:
+        raise BadAlg(f"{hash_name!r} is not a hash of the registry.")
+    return _make(_HASH_REGISTRY[hash_name][0], univ.Null("") if hash_name in _HASHES_WITH_NULL else None)
+
+
+def _prf_alg_id(hash_name: str) -> AlgId:
+    """Return the HMAC identifier for the ``prf`` of PBKDF2: the OID of RFC 8018 Appendix B.1 where there is one."""
+    oid = PRF_OID.get(hash_name) or _oid_of(MAC_OID, ("hmac", hash_name, None), f"HMAC with {hash_name!r}")
+    return _make(oid, univ.Null("") if hash_name in _HASHES_WITH_NULL else None)
+
+
+def _pbkdf2_parameters(salt: bytes, iterations: int, key_length: Optional[int], prf_hash: str) -> Any:
+    """Return ``PBKDF2-params`` (RFC 8018 Appendix A.2) with a specified salt."""
+    params = rfc8018.PBKDF2_params()
+    prf = _prf_alg_id(prf_hash)
+    try:
+        params["salt"]["specified"] = salt
+        params["iterationCount"] = iterations
+        if key_length is not None:
+            params["keyLength"] = key_length
+        if prf_hash != "sha1":  # HMAC-SHA-1 with NULL is the DEFAULT, which DER leaves out
+            params["prf"] = prf
+    except (PyAsn1Error, KeyError) as exc:
+        raise ValueError(f"Not a valid PBKDF2-params value: {exc}") from exc
+    return params
+
+
+# The keyword is called ``hash``, as the algorithm tables call the fact.
+# pylint: disable=redefined-builtin
+def _build_hkdf(*, hash: str) -> AlgId:
+    """HKDF with ``hash``; the parameters are absent."""
+    return _make(_oid_of(KDF_OID, ("hkdf", hash), f"HKDF with {hash!r}"))
+
+
+def _build_kdf2(*, hash: str) -> AlgId:
+    """KDF2 (X9.63); the parameters are the identifier of ``hash``."""
+    return _make(KDF_OID[("kdf2", None)], _hash_alg_id(hash))
+
+
+def _build_kdf3(*, hash: str) -> AlgId:
+    """KDF3; the parameters are the identifier of ``hash``."""
+    return _make(KDF_OID[("kdf3", None)], _hash_alg_id(hash))
+
+
+def _build_pbkdf2(*, salt: bytes, iterations: int, prf_hash: str, key_length: Optional[int] = None) -> AlgId:
+    """PBKDF2 with a specified ``salt``; an absent ``key_length`` leaves ``keyLength`` out."""
+    return _make(KDF_OID[("pbkdf2", None)], _pbkdf2_parameters(salt, iterations, key_length, prf_hash))
+
+
+def _build_hmac(*, hash: str) -> AlgId:
+    """HMAC with ``hash``; the parameters are absent. SHA-1 gets ``hMAC-SHA1``, the OID of a MAC."""
+    return _make(_oid_of(MAC_OID, ("hmac", hash, None), f"HMAC with {hash!r}"))
+
+
+def _build_kmac(*, hash: str) -> AlgId:
+    """KMAC128 (``hash="shake128"``) or KMAC256 (``"shake256"``); the parameters are absent."""
+    return _make(_oid_of(MAC_OID, ("kmac", hash, None), f"KMAC with {hash!r}"))
+
+
+def _build_gmac(*, bits: int, nonce: bytes, tag_length: Optional[int] = None) -> AlgId:
+    """AES-GMAC with a ``bits`` key; the parameters carry ``nonce`` and, if given, ``tag_length`` (12 to 16)."""
+    params = rfc9044.GCMParameters()
+    try:
+        params["nonce"] = nonce
+        if tag_length is not None:
+            params["length"] = tag_length
+    except (PyAsn1Error, KeyError) as exc:
+        raise ValueError(f"Not a valid GMACParameters value: {exc}") from exc
+    return _make(_oid_of(MAC_OID, ("gmac", None, bits), f"AES-GMAC with a {bits} bit key"), params)
+
+
+def _build_pbmac1(
+    *, salt: bytes, iterations: int, key_length: Optional[int], prf_hash: str, mac_hash: Optional[str] = None
+) -> AlgId:
+    """PBMAC1 over PBKDF2 and HMAC; ``mac_hash`` is ``prf_hash`` if not given. ``key_length`` None leaves it out."""
+    params = rfc8018.PBMAC1_params()
+    params["keyDerivationFunc"] = _build_pbkdf2(
+        salt=salt, iterations=iterations, prf_hash=prf_hash, key_length=key_length
+    )
+    params["messageAuthScheme"] = _build_hmac(hash=mac_hash or prf_hash)
+    return _make(MAC_OID[("pbmac1", None, None)], params)
+
+
+def _build_aes_wrap(*, bits: int, mode: str) -> AlgId:
+    """AES key wrap (``mode="kw"``, RFC 3394) or key wrap with padding (``"kwp"``, RFC 5649) with a ``bits`` KEK."""
+    return _make(_oid_of(WRAP_OID, (mode, bits // 8), f"AES key wrap mode {mode!r} with a {bits} bit KEK"))
+
+
+def _build_aes_cbc(*, bits: int, iv: bytes) -> AlgId:
+    """AES-CBC with a ``bits`` key; the parameters are ``iv`` as an OCTET STRING, of any size."""
+    return _make(_oid_of(CONTENT_OID, ("cbc", bits // 8), f"AES-CBC with a {bits} bit key"), univ.OctetString(iv))
+
+
+def _build_aes_gcm(*, bits: int, nonce: bytes, tag_length: Optional[int] = None) -> AlgId:
+    """AES-GCM with a ``bits`` key; the parameters carry ``nonce`` and, if given, ``tag_length`` (12 to 16)."""
+    params = rfc5084.GCMParameters()
+    try:
+        params["aes-nonce"] = nonce
+        if tag_length is not None:
+            params["aes-ICVlen"] = tag_length
+    except (PyAsn1Error, KeyError) as exc:
+        raise ValueError(f"Not a valid GCMParameters value: {exc}") from exc
+    return _make(_oid_of(CONTENT_OID, ("gcm", bits // 8), f"AES-GCM with a {bits} bit key"), params)
+
+
+# pylint: enable=redefined-builtin
+_BUILDERS: Dict[str, Dict[str, Callable[..., AlgId]]] = {
+    "kdf": {"hkdf": _build_hkdf, "kdf2": _build_kdf2, "kdf3": _build_kdf3, "pbkdf2": _build_pbkdf2},
+    "mac": {"hmac": _build_hmac, "kmac": _build_kmac, "gmac": _build_gmac, "pbmac1": _build_pbmac1},
+    "wrap": {"aes": _build_aes_wrap},
+    "content": {"aes-cbc": _build_aes_cbc, "aes-gcm": _build_aes_gcm},
+}
+
+
+def make_alg_id(kind: AlgKind, family: str, **params: Any) -> AlgId:
+    """Build the ``AlgorithmIdentifier`` of one algorithm family, with its parameters as the RFCs write them.
+
+    One builder per family; its keywords are the facts of the family, and a keyword that the builder does not know, or
+    a required one that is missing, is a ``TypeError``. The ``params`` of a row of :func:`keyutils_py.list_algorithms`
+    are keywords that the builder of its family takes (the rest, like a salt or a nonce, the caller adds).
+
+    * ``("kdf", "hkdf")``: ``hash`` (``"sha256"``, ``"sha384"``, ``"sha512"``, ``"sha3_224"`` to ``"sha3_512"``).
+    * ``("kdf", "kdf2")`` and ``("kdf", "kdf3")``: ``hash``, the hash that the parameters name.
+    * ``("kdf", "pbkdf2")``: ``salt``, ``iterations``, ``prf_hash``, ``key_length=None`` (then ``keyLength`` is absent).
+    * ``("mac", "hmac")``: ``hash``; SHA-1 gives ``hMAC-SHA1``, the OID of a MAC.
+    * ``("mac", "kmac")``: ``hash``, ``"shake128"`` or ``"shake256"``.
+    * ``("mac", "gmac")``: ``bits`` (the key size), ``nonce``, ``tag_length=None`` (12 to 16; absent means 12).
+    * ``("mac", "pbmac1")``: ``salt``, ``iterations``, ``key_length`` (None leaves it out), ``prf_hash``,
+      ``mac_hash=None`` (then ``prf_hash``).
+    * ``("wrap", "aes")``: ``bits`` (the KEK size), ``mode`` (``"kw"`` or ``"kwp"``).
+    * ``("content", "aes-cbc")``: ``bits``, ``iv``.
+    * ``("content", "aes-gcm")``: ``bits``, ``nonce``, ``tag_length=None`` (12 to 16; absent means 12).
+
+    A builder writes what it is asked for and does not check sizes, so a test can build an identifier that a receiver
+    refuses (a 15 octet IV, a PBKDF2 ``keyLength`` that differs from the length that is derived). SHA-1 and SHA-2
+    inside the parameters of KDF2, KDF3 and the PBKDF2 ``prf`` carry NULL (RFC 9690 Appendix D, RFC 8018 Appendix B.1),
+    SHA-3 none.
+
+    :param kind: The kind of algorithm. ``"kari"`` and ``"key_transport"`` have no builder yet.
+    :param family: The family within the kind.
+    :param params: The keywords of the family.
+    :raises BadAlg: If the kind or family is unknown, or the table has no OID for the hash, size or mode.
+    :raises TypeError: If a keyword is unknown for the family or a required one is missing.
+    :raises ValueError: If a value cannot be written (a PBKDF2 ``iterations`` of 0, a ``tag_length`` of 11).
+    """
+    try:
+        builder = _BUILDERS[kind][family]
+    except KeyError:
+        raise BadAlg(f"There is no builder for the algorithm family {family!r} of the kind {kind!r}.") from None
+    return builder(**params)

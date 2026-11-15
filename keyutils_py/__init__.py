@@ -22,6 +22,14 @@ Public top-level surface (most callers stop here)::
         prepare_hash_alg_id,  # keyutils
         get_sig_alg_info,  # oids: the row of a signature OID or AlgorithmIdentifier
         list_algorithms,  # algorithms: the rows of one kind of algorithm
+        make_alg_id,  # mechanisms: the AlgorithmIdentifier of a KDF, MAC, key wrap or content algorithm
+        kdf_derive,  # mechanisms
+        compute_mac,
+        verify_mac,  # mechanisms
+        wrap_cek,
+        unwrap_cek,  # mechanisms
+        encrypt_content,
+        decrypt_content,  # mechanisms
         save_key,  # keyutils
         load_private_key_from_file,  # keyutils
         load_public_key_from_file,  # keyutils
@@ -45,6 +53,10 @@ Public top-level surface (most callers stop here)::
 Submodules (when you need more):
 
 * ``keyutils_py.compute`` — sign / verify / RSA-PSS / encaps / decaps / ECDH.
+* ``keyutils_py.mechanisms`` — the operations that an ``AlgorithmIdentifier`` selects: :func:`make_alg_id`,
+  :func:`kdf_derive`, :func:`compute_mac`, :func:`verify_mac`, :func:`wrap_cek` and :func:`unwrap_cek`,
+  :func:`encrypt_content` and :func:`decrypt_content`.
+* ``keyutils_py.primitives`` — the keyless functions below them, by the name of the hash (importable, not public API).
 * ``keyutils_py.keyutils`` — generate, save/load, SPKI, alg-id builders, manipulation.
 * ``keyutils_py.security`` — security-strength estimation.
 * ``keyutils_py.asn1utils`` — DER encode/decode and a ``BitString`` builder
@@ -63,7 +75,7 @@ the ``pq`` extra. Without it, those entry points raise
 ``pyhsslms``.
 """
 
-from keyutils_py.algorithms import list_algorithms
+from keyutils_py.algorithms import AlgInfo, list_algorithms
 from keyutils_py.asn1utils import encode_to_der, try_decode_pyasn1
 from keyutils_py.compute import (
     compute_decaps,
@@ -79,9 +91,11 @@ from keyutils_py.compute import (
 )
 from keyutils_py.exceptions import (
     BadAlg,
+    BadAlgParams,
     BadAsn1Data,
     BadSigAlgID,
     BadSigAlgIDParams,
+    IntegrityError,
     KeyUtilsError,
     MissingOQSDependencyError,
 )
@@ -101,6 +115,20 @@ from keyutils_py.keyutils import (
     prepare_spki,
     save_key,
     validate_sig_alg_id,
+)
+from keyutils_py.mechanisms import (
+    AlgKind,
+    Encrypted,
+    compute_mac,
+    decrypt_content,
+    encrypt_content,
+    kdf_derive,
+    mac_key_length,
+    make_alg_id,
+    unwrap_cek,
+    verify_mac,
+    wrap_cek,
+    wrap_key_length,
 )
 from keyutils_py.oids import (
     RSA_OID_2_NAME,
@@ -131,6 +159,20 @@ __all__ = [
     "SIG_ALG_OID_2_INFO",
     "get_sig_alg_info",
     "list_algorithms",
+    # Mechanisms by AlgorithmIdentifier
+    "AlgInfo",
+    "AlgKind",
+    "Encrypted",
+    "make_alg_id",
+    "kdf_derive",
+    "compute_mac",
+    "verify_mac",
+    "mac_key_length",
+    "wrap_cek",
+    "unwrap_cek",
+    "wrap_key_length",
+    "encrypt_content",
+    "decrypt_content",
     # KEMs and ECDH
     "compute_encaps",
     "compute_decaps",
@@ -168,8 +210,10 @@ __all__ = [
     # Exceptions
     "KeyUtilsError",
     "BadAlg",
+    "BadAlgParams",
     "BadAsn1Data",
     "BadSigAlgID",
     "BadSigAlgIDParams",
+    "IntegrityError",
     "MissingOQSDependencyError",
 ]

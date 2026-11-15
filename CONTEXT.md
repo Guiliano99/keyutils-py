@@ -61,6 +61,23 @@ parameter shape and CMS digest. Signing, verifying and the consistency check rea
 means.
 _Avoid_: signature profile, algorithm spec
 
+**Algorithm table row**:
+The frozen row of `keyutils_py._algs` that says what one OID of a key derivation function, MAC, AES key wrap, content
+encryption, key agreement scheme or key transport algorithm stands for: a family, a hash by the name of the hash
+registry, a size. Nothing else decides what such an OID means; the inverse indexes are generated from the rows.
+_Avoid_: algorithm spec, algorithm profile
+
+**Mechanism**:
+A function of `keyutils_py.mechanisms` that reads an `AlgorithmIdentifier` as a receiver does (OID from the table row,
+parameters decoded and checked) and runs what it names: `kdf_derive`, `compute_mac`, `verify_mac`, `wrap_cek`,
+`unwrap_cek`, `encrypt_content`, `decrypt_content`. `make_alg_id` is the builder that writes such an identifier.
+_Avoid_: primitive, algorithm function
+
+**Lower layer**:
+`keyutils_py.primitives`: functions by the name of the hash on plain bytes, with no identifier, no OID and no limit on a
+size. It is importable and not public API; a test uses it to make what a mechanism refuses.
+_Avoid_: public primitives
+
 **Pre-hash OID**:
 A signature OID that names the hash of the HashML-DSA or HashSLH-DSA mode (for example
 `id-ml-dsa-44-with-sha512`). The key signs in pre-hash mode with that hash; the pure OID of the same parameter set
