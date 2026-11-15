@@ -130,7 +130,8 @@ alg_id = prepare_sig_alg_id(ml_dsa_key, "sha512")  # the HashML-DSA OID; the OID
 The OID decides how a signature is made: a pre-hash OID signs in pre-hash mode, a composite `-pss` OID signs with
 RSASSA-PSS, and a key with the OID of another family or parameter set raises `BadSigAlgID`. `sign_data` and
 `verify_signature` choose the algorithm from the key instead and need `hash_alg=` for RSA, ECDSA and DSA keys (no
-default hash).
+default hash). `verify_signature_with_alg_id` refuses SHA-1 signatures with `BadAlg` unless the caller passes
+`allow_sha1=True`; signing is not restricted.
 
 ### 7. Estimate security strength
 

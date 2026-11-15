@@ -97,8 +97,10 @@ SPDX-License-Identifier: Apache-2.0 -->
 - Breaking for consumers of `sign_data`, `verify_signature`, `sign_with_alg_id`, `verify_signature_with_alg_id`,
   `check_consistency_sig_alg_id_and_key`, `validate_sig_alg_id` and `prepare_sig_alg_id` that pin an older commit
   (nothing changes until they bump):
-  - `verify_signature_with_alg_id` verifies `sha1WithRSAEncryption` (was `BadAlg`). Refusing SHA-1 is a policy of the
-    caller: `get_sig_alg_info(alg_id).hash_alg == "sha1"`.
+  - `verify_signature_with_alg_id` still refuses `sha1WithRSAEncryption` with `BadAlg`, and now refuses every
+    SHA-1 signature the same way: `rsaEncryption` with `hash_alg="sha1"`, and RSASSA-PSS with SHA-1 (it was
+    verified before), the RFC 4055 Section 3.1 defaults included. The new keyword-only `allow_sha1=True` verifies
+    them; the caller that accepts SHA-1 says so. Signing and `verify_signature` are not restricted.
   - A PQ, stateful-hash or composite key with an OID of another family or another parameter set raises `BadSigAlgID`
     in `sign_with_alg_id` and `verify_signature_with_alg_id` (it signed and verified under any OID, or raised
     `TypeError` for a composite OID). An ML-DSA key with an ML-DSA OID of another parameter set and a composite key

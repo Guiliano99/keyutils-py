@@ -288,7 +288,8 @@ class TestLegacyButValid(_KeysTestCase):
         """GIVEN an RSA key and SHA-1 / WHEN signed and verified by identifier / THEN valid; the hash is readable."""
         alg_id = prepare_sig_alg_id(self.rsa, "sha1")
         self.assertEqual(get_sig_alg_info(alg_id).hash_alg, "sha1")
-        verify_signature_with_alg_id(self.rsa.public_key(), alg_id, DATA, sign_with_alg_id(self.rsa, alg_id, DATA))
+        signature = sign_with_alg_id(self.rsa, alg_id, DATA)
+        verify_signature_with_alg_id(self.rsa.public_key(), alg_id, DATA, signature, allow_sha1=True)
 
     def test_dsa_is_signed_by_name_and_its_identifier_is_valid(self):
         """GIVEN a DSA key / WHEN signed by name with the prepared identifier / THEN valid; by identifier BadAlg."""
