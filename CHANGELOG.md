@@ -77,6 +77,15 @@ SPDX-License-Identifier: Apache-2.0 -->
   omitted signature; random or NULL parameters; other hash, other OID, other padding, unknown OID, broken or other PSS
   parameters; other key; other context; omitted identifier; legacy SHA-1 and DSA) is produced by explicit calls on a
   valid pair, and that every one is refused as a verifier refuses it.
+- The algorithm tables of the key derivation functions (HKDF with SHA-2 and SHA-3, KDF2, KDF3, PBKDF2), the MACs (HMAC
+  with SHA-1, SHA-2 and SHA-3, KMAC128/256, AES-GMAC, PBMAC1), AES key wrap (RFC 3394) and key wrap with padding
+  (RFC 5649), AES-CBC and AES-GCM, the key agreement schemes of RFC 5753 (12, plus `id-X25519`, `id-X448` and
+  `id-alg-ESDH`, which name no hash) and the RSA key transport algorithms, in the private module `keyutils_py/_algs.py`.
+  One frozen row per OID with structured fields (a family, a hash by the name of the hash registry, a size), and the
+  inverse indexes generated at import, so no code splits a name such as `hkdf-sha3-256` to find the hash. HMAC-SHA1 has
+  two rows, `hMAC-SHA1` (RFC 3370) and `id-hmacWithSHA1` (RFC 8018, the default pseudorandom function of PBKDF2).
+  `tests/golden/alg_tables.tsv` holds the 55 rows as written from the RFCs (`tests/golden/generate_alg_tables.py`,
+  which also checks every OID against `pyasn1_alt_modules`), not derived from the code.
 
 ## Changed
 
