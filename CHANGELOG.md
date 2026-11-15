@@ -33,6 +33,7 @@ SPDX-License-Identifier: Apache-2.0 -->
   `_get_pq_and_trad_name`) are public.
 - `DHPrivateKey` and `DHPublicKey` are in `KEY_CLASS_MAPPING`, so `get_key_name` knows them.
 - `DSAPrivateKey` defines `__eq__` and `__hash__`, like the other key wrappers.
+- `KEM_OID_2_NAME` contains the RSA-KEM OID (`1.0.18033.2.2.4`) as `rsa-kem`, next to the PQ and hybrid KEMs.
 
 ## Changed
 
