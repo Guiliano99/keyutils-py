@@ -124,9 +124,12 @@ class TestRoundTripMatrix(unittest.TestCase):
                 options = {"hash_alg": "sha256"} if name == "rsa-encryption" else {}
                 alg_id = _row_alg_id(row)
                 signature = sign_with_alg_id(key, alg_id, DATA, **options)
-                verify_signature_with_alg_id(key.public_key(), alg_id, DATA, signature, **options)
+                # The SHA-1 rows are only verified on request (tests/test_verify_sha1_policy.py).
+                verify_signature_with_alg_id(key.public_key(), alg_id, DATA, signature, allow_sha1=True, **options)
                 with self.assertRaises(InvalidSignature):
-                    verify_signature_with_alg_id(key.public_key(), alg_id, DATA + b"x", signature, **options)
+                    verify_signature_with_alg_id(
+                        key.public_key(), alg_id, DATA + b"x", signature, allow_sha1=True, **options
+                    )
 
     def test_dsa_is_refused_by_alg_id(self):
         """GIVEN a DSA key / WHEN used with id-dsa-with-sha256 / THEN BadAlg for sign and verify, as before."""
@@ -351,7 +354,7 @@ class TestRsaPkcs1AndRsaEncryption(unittest.TestCase):
         """GIVEN sha1WithRSAEncryption / WHEN a SHA-1 signature of cryptography is verified / THEN it verifies."""
         alg_id = _alg_id(rfc8017.sha1WithRSAEncryption, univ.Null(""))
         signature = self.key.sign(DATA, padding.PKCS1v15(), hashes.SHA1())
-        verify_signature_with_alg_id(self.pub, alg_id, DATA, signature)
+        verify_signature_with_alg_id(self.pub, alg_id, DATA, signature, allow_sha1=True)
         self.pub.verify(sign_with_alg_id(self.key, alg_id, DATA), DATA, padding.PKCS1v15(), hashes.SHA1())
 
     def test_absent_parameters_are_accepted_in_sign_and_verify(self):
@@ -444,7 +447,7 @@ class TestRsaPssParametersAreHonoured(unittest.TestCase):
         alg_id = _pss_alg_id("sha1", omit_hash=True)
         signature = sign_with_alg_id(self.key, alg_id, DATA)
         self.pub.verify(signature, DATA, self._pss("sha1", 20), hashes.SHA1())
-        verify_signature_with_alg_id(self.pub, alg_id, DATA, signature)
+        verify_signature_with_alg_id(self.pub, alg_id, DATA, signature, allow_sha1=True)
 
     def test_pss_parameters_as_decoded_structure(self):
         """GIVEN RSASSA-PSS-params as a structure and as Any / WHEN verified / THEN both work."""

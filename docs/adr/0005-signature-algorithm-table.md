@@ -30,8 +30,12 @@ Decisions, with their reason:
 - The RSASSA-PSS salt length is honoured as given, 0 included; omitted fields of the parameters have the DEFAULT values
   of RFC 4055 Section 3.1 (SHA-1, MGF1 with SHA-1, salt length 20). A MGF1 hash that differs from the hash stays
   `BadSigAlgIDParams`; the builder can still write it, so it remains a negative-test input.
-- RSA-SHA1 is verified. RFC 9481 lists it as deprecated, but a conformance suite has to judge what a peer sends;
-  refusing it is the policy of the caller (`get_sig_alg_info(alg_id).hash_alg == "sha1"`).
+- SHA-1 is refused on verification unless the caller passes `allow_sha1=True`. RFC 9481 lists RSA-SHA1 as
+  deprecated, and verification is a trust decision, so the library keeps the fail-closed default it had for
+  `sha1WithRSAEncryption` and applies it to every identifier that names SHA-1 (PKCS#1 v1.5, `rsaEncryption` with
+  `hash_alg="sha1"`, RSASSA-PSS with SHA-1 or MGF1 with SHA-1). A conformance suite still has to judge what a
+  peer sends, so each caller that accepts SHA-1 opts in in its own code. Signing is not restricted: a suite must
+  produce SHA-1 material.
 - DSA stays by-name only (`sign_data`, `verify_signature`); the identifier functions raise `BadAlg` for a DSA key, as
   before (ADR 0004).
 - `sign_data` and `verify_signature` have no default hash and keyword-only options, so a misspelled option raises

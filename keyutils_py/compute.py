@@ -459,20 +459,25 @@ def verify_signature_with_alg_id(
     signature: bytes,
     *,
     hash_alg: Optional[str] = None,
+    allow_sha1: bool = False,
 ) -> None:
     """Verify ``signature`` over ``data`` with the algorithm that ``alg_id`` names.
 
     The verification counterpart of :func:`sign_with_alg_id`, with the same rules for the key, the OID and the
-    parameters. RSA-SHA1 (``sha1WithRSAEncryption``) is verified: whether to refuse it is the policy of the caller,
-    who can read the hash from :func:`keyutils_py.oids.get_sig_alg_info`.
+    parameters. Verification is a trust decision, so a SHA-1 signature is refused unless the caller passes
+    ``allow_sha1=True``: ``sha1WithRSAEncryption``, ``rsaEncryption`` with ``hash_alg="sha1"``, and RSASSA-PSS whose
+    hash or MGF1 hash is SHA-1, which includes the parameters that leave every field out (RFC 4055 Section 3.1).
+    Signing is not restricted, and :func:`verify_signature` takes the hash from its caller.
 
     :param public_key: The signature public key. Must match the ``alg_id`` family.
     :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm.
     :param data: The message bytes the signature is over.
     :param signature: The signature bytes to check.
     :param hash_alg: The hash for ``rsaEncryption``; see :func:`sign_with_alg_id`.
+    :param allow_sha1: Verify SHA-1 signatures instead of refusing them.
     :raises BadAlg: If the OID is not a supported signature OID, ``public_key`` is not a signature key, ``public_key``
-        is a DSA key (DSA is not supported here), or ``rsaEncryption`` is used without ``hash_alg``.
+        is a DSA key (DSA is not supported here), ``rsaEncryption`` is used without ``hash_alg``, or the signature
+        uses SHA-1 and ``allow_sha1`` is false.
     :raises BadSigAlgID: If ``public_key`` does not match the algorithm identifier, or ``hash_alg`` contradicts it.
     :raises BadSigAlgIDParams: If the ``alg_id`` parameters are invalid for the OID.
     :raises cryptography.exceptions.InvalidSignature: If the signature does not verify.
@@ -483,7 +488,10 @@ def verify_signature_with_alg_id(
     if isinstance(public_key, DSAPublicKey):
         raise BadAlg("DSA algorithm is not supported.")
     _check_key_matches(info, public_key)
-    verify_signature(public_key, signature, data, **_options_from_row(info, hash_alg))
+    options = _options_from_row(info, hash_alg)
+    if not allow_sha1 and "sha1" in (options.get("hash_alg"), info.mgf1_hash_alg):
+        raise BadAlg(f"{info.name} uses SHA-1; pass `allow_sha1=True` to verify it.")
+    verify_signature(public_key, signature, data, **options)
 
 
 # ---------------------------------------------------------------------------

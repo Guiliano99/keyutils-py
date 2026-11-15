@@ -58,7 +58,7 @@ _SIGNATURES = {
     "sign_with_alg_id": "(key: 'SignKey', alg_id: 'rfc9480.AlgorithmIdentifier', data: 'bytes', *, "
     "hash_alg: 'Optional[str]' = None) -> 'bytes'",
     "verify_signature_with_alg_id": "(public_key: 'VerifyKey', alg_id: 'rfc9480.AlgorithmIdentifier', data: 'bytes', "
-    "signature: 'bytes', *, hash_alg: 'Optional[str]' = None) -> 'None'",
+    "signature: 'bytes', *, hash_alg: 'Optional[str]' = None, allow_sha1: 'bool' = False) -> 'None'",
     "validate_sig_alg_id": "(alg_id: 'rfc9480.AlgorithmIdentifier', *, strict: 'bool' = True) -> 'None'",
     "prepare_sig_alg_id": "(key: 'Union[PrivateKey, PublicKey]', hash_alg: 'Optional[str]' = None, "
     "use_rsa_pss: 'bool' = False) -> 'rfc5280.AlgorithmIdentifier'",
