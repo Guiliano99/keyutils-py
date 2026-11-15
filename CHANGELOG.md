@@ -95,6 +95,15 @@ SPDX-License-Identifier: Apache-2.0 -->
 - `BadAlgParams` (the parameters of a known algorithm are absent, present wrongly or inconsistent) and `IntegrityError`
   (a key unwrap, CBC padding, GCM tag or MAC does not verify; the message does not say why) in
   `keyutils_py.exceptions`. Both derive from `KeyUtilsError`.
+- `keyutils_py.mechanisms.kdf_derive(kdf, secret, length, info=b"")` derives with the key derivation function that an
+  `AlgorithmIdentifier` names: HKDF with SHA-256/384/512 and SHA3-224/256/384/512 (the hash is in the OID, the
+  parameters must be absent, RFC 8619, RFC 9688), KDF2 (X9.63) and KDF3 (the hash, SHA-1, SHA-2 or SHA-3, is the
+  `AlgorithmIdentifier` in the parameters; SHAKE is `BadAlg`), and PBKDF2. `PBKDF2-params` is decoded with its own
+  specification, so it works for an identifier after a DER round trip; an absent `prf` is HMAC-SHA-1 (RFC 8018 Appendix
+  A.2 DEFAULT); `keyLength`, if present, must equal `length`; a salt from `otherSource` is `BadAlg`; the iteration
+  count is capped at `MAX_PBKDF2_ITERATIONS`; PBKDF2 takes no `info`. An OID in no table is `BadAlg`, parameters that
+  are absent, present wrongly or inconsistent are `BadAlgParams`, undecodable ones `BadAsn1Data`. Not yet exported from
+  `keyutils_py`.
 
 ## Changed
 
