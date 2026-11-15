@@ -320,8 +320,9 @@ id_composite_sig_test_suite = f"{id_hybrid_sig_test_suite}.1"
 id_Chempat = f"{id_hybrid_kems_test_suite}.2"
 id_composite_kem_test_suite = f"{id_hybrid_kems_test_suite}.1"
 
-# RSA-KEM SPKI OID (RFC 9690)
-id_rsa_kem_spki = univ.ObjectIdentifier("1.2.840.113549.1.9.16.3")
+# RSA-KEM SPKI OID: ``id-rsa-kem-spki`` is ``id-rsa-kem`` (1.2.840.113549.1.9.16.3.14), RFC 9690 Appendix B.
+# It is not the ``id-alg`` arc (1.2.840.113549.1.9.16.3) and not ``id-kem-rsa`` (1.0.18033.2.2.4) of ISO 18033-2.
+id_rsa_kem_spki = rfc5990.id_rsa_kem
 
 # XWing
 XWING_OID_STR = "1.3.6.1.4.1.62253.25722"
@@ -662,6 +663,7 @@ for _table in (
     AES_GCM_OID_2_NAME,
     KEY_WRAP_OID_2_NAME,
     HKDF_OID_2_NAME,
+    {id_rsa_kem_spki: "rsa-kem"},
 ):
     ALG_OID_2_NAME.update(_table)
 

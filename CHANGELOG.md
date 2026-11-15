@@ -34,6 +34,19 @@ SPDX-License-Identifier: Apache-2.0 -->
 - `DHPrivateKey` and `DHPublicKey` are in `KEY_CLASS_MAPPING`, so `get_key_name` knows them.
 - `DSAPrivateKey` defines `__eq__` and `__hash__`, like the other key wrappers.
 - `KEM_OID_2_NAME` contains the RSA-KEM OID (`1.0.18033.2.2.4`) as `rsa-kem`, next to the PQ and hybrid KEMs.
+- `keyutils_py.oids` defines the hash, HMAC, KMAC, AES-GMAC, HKDF, AES-CBC/GCM, AES key wrap and CMP protection
+  tables and OID constants that cmp-test-suite takes from its own `resources.oidutils` and `pq_logic.tmp_oids`, with
+  the same names and the same OIDs: `SHA_OID_2_NAME`, `SHA2_NAME_2_OID`, `HMAC_OID_2_NAME`, `KMAC_OID_2_NAME`,
+  `AES_GMAC_NAME_2_OID`, `AES_GMAC_OID_2_NAME`, `HKDF_NAME_2_OID`, `HKDF_OID_2_NAME`, `AES_CBC_OID_2_NAME`,
+  `AES_GCM_OID_2_NAME`, `KEY_WRAP_NAME_2_OID`, `KEY_WRAP_OID_2_NAME`, `KM_KW_ALG`, `LWCMP_MAC_OID_2_NAME`,
+  `SYMMETRIC_PROT_ALGO`, `SYMMETRIC_ENCR_ALG_NAME_2_OID`, `MSG_SIG_ALG`, `SUPPORTED_MAC_OID_2_NAME`,
+  `id_KemBasedMac`, `id_it_KemCiphertextInfo` and `id_ce_subjectAltPublicKeyInfo` / `id_ce_altSignatureAlgorithm` /
+  `id_ce_altSignatureValue`, plus the building blocks `id_alg`, `SHA2_OID_2_NAME`, `HMAC_SHA_OID_2_NAME`,
+  `HMAC_SHA3_OID_2_NAME`, `AES_CBC_NAME_2_OID`, `AES_GCM_NAME_2_OID` and `SYMMETRIC_ENCR_ALG_OID_2_NAME`.
+  `tests/golden/oid_tables.tsv` holds the cmp-test-suite values; `tests/golden/generate_oid_tables.py` rewrites it
+  and is run by hand from a cmp-test-suite checkout.
+- `ALG_OID_2_NAME`, one OID -> name table for every OID the tables of `keyutils_py.oids` name. It is built from OID
+  -> name tables only and has no entry that maps a name to an OID, unlike `ALL_KNOWN_OIDS_2_NAME` of cmp-test-suite.
 
 ## Changed
 
@@ -45,6 +58,12 @@ SPDX-License-Identifier: Apache-2.0 -->
   `keyutils_py.data_objects.ML_PRIVATE_KEY_STRUCTURES`.
 - FrodoKEM no longer requires `liboqs` at the `keyutils` functions, because `keyutils_py.fips.frodokem` is a
   pure Python implementation.
+- `may_return_oid_to_name` reads `ALG_OID_2_NAME` and names the hash, MAC, AES, key wrap, HKDF and traditional
+  signature OIDs (for example `rsa-sha256` and `hmac-sha256`), where it returned the dotted string before. It named
+  106 of the 203 OIDs that cmp-test-suite names and now names 163 of them, with the same names; the extension, key
+  agreement, curve and PBKDF2/KDF2/KDF3 OIDs still come back as the dotted string.
+- The version is `0.1.0`. An SPKI or PKCS#8 key with the old RSA-KEM OID is not accepted any more (see Fixed), so
+  `0.0.2` is not compatible with it.
 
 ## Fixed
 
@@ -66,6 +85,17 @@ SPDX-License-Identifier: Apache-2.0 -->
   `ConstBitStream` in `kem_decaps`, are replaced.
 - Malformed ML-DSA / ML-KEM key material (for example a public key of the wrong length) raises
   `InvalidKeyData` instead of the bare `ValueError` raised by `cryptography`.
+- `compute_hash`, `sha_alg_name_to_oid`, `get_hash_from_oid` and `hash_name_to_instance` read one hash registry.
+  Three tables disagreed before: `compute_hash` had no SHA-1 and no SHA-3 (`ValueError`), `sha_alg_name_to_oid` and
+  `get_hash_from_oid` had no SHA-3 (`ValueError` and `None`), while `hash_name_to_instance` knew all 11 names.
+  The registry has SHA-1, SHA-224 to SHA-512, SHA3-224 to SHA3-512 (`2.16.840.1.101.3.4.2.7` to `.10`, RFC 9688)
+  and SHAKE128 / SHAKE256 with 32 / 64 bytes of output (RFC 9814 Section 4). Unknown names still raise `ValueError`.
+- `id_rsa_kem_spki` is `1.2.840.113549.1.9.16.3.14` (`id-rsa-kem-spki`, RFC 9690 Appendix B). It was
+  `1.2.840.113549.1.9.16.3`, which is the `id-alg` arc. `RSAEncapKey.get_oid()`, `prepare_spki` with the key name
+  `rsa-kem` (also for a KGA) and the RSA-KEM `OneAsymmetricKey` use the RFC value, so an RSA-KEM key of another
+  implementation loads, where `load_public_key_from_spki` raised `UnsupportedAlgorithm` before. The old OID is not
+  accepted any more: keys written by `0.0.2` with it have to be written again. `1.2.840.113549.1.9.16.3.14` is named
+  `rsa-kem` by `may_return_oid_to_name`, like `1.0.18033.2.2.4` (`id-kem-rsa`, the KEM algorithm itself).
 
 # 0.0.2
 
