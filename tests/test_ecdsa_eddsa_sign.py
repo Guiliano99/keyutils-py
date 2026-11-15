@@ -13,7 +13,7 @@ import unittest
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc5480, rfc8017, rfc9480, rfc9481, rfc9688
 
@@ -163,10 +163,12 @@ class TestStrictOidKeyBinding(unittest.TestCase):
         with self.assertRaises(BadSigAlgID):
             verify_signature_with_alg_id(key.public_key(), _alg_id(rfc9481.sha256WithRSAEncryption), b"data", b"\x00")
 
-    def test_verify_rsa_key_with_sha1_oid_raises_badalg(self):
-        """GIVEN an RSA key + rsa-sha1 OID (NULL params) / WHEN verifying / THEN BadAlg (SHA-1 rejected)."""
+    def test_verify_rsa_key_with_sha1_oid_is_checked_not_refused(self):
+        """GIVEN an RSA key + rsa-sha1 OID (NULL params) / WHEN verifying / THEN the SHA-1 signature is verified."""
         alg_id = _alg_id(rfc8017.sha1WithRSAEncryption, univ.Null(""))
-        with self.assertRaises(BadAlg):
+        genuine = self.rsa_key.sign(b"data", padding.PKCS1v15(), hashes.SHA1())
+        verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", genuine)
+        with self.assertRaises(InvalidSignature):
             verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", b"\x00")
 
     def test_sign_ec_key_with_rsa_pss_oid_raises_sig_alg_id(self):
