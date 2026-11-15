@@ -1012,7 +1012,7 @@ def get_sig_alg_info(
     :param strict: ``False`` accepts absent and NULL parameters where RFC 4055 Section 5 and RFC 5754 Section 3.2
         say implementations MUST accept both (the PKCS#1 v1.5 identifiers); ``True`` is the generation rule
         (NULL is required there). A parameter that must be absent is refused in both modes.
-    :raises BadAlg: If the OID is not a signature OID.
+    :raises BadAlg: If the OID is not a signature OID, or the identifier has no OID.
     :raises BadSigAlgIDParams: If the parameters are malformed for the OID (for RSASSA-PSS: unreadable, MGF1 hash
         different from the hash, trailerField other than 1).
     """
@@ -1020,6 +1020,8 @@ def get_sig_alg_info(
         oid, parameters = alg_id, None
     else:
         oid, parameters = alg_id["algorithm"], alg_id["parameters"]
+    if not oid.isValue:
+        raise BadAlg("The AlgorithmIdentifier has no algorithm OID.")
     info = SIG_ALG_OID_2_INFO.get(oid)
     if info is None:
         raise BadAlg(f"Unsupported signature AlgorithmIdentifier OID: {may_return_oid_to_name(oid)}.")

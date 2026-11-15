@@ -161,7 +161,7 @@ def check_consistency_sig_alg_id_and_key(
     except BadAlg as exc:
         raise BadSigAlgID(
             "The algorithm identifier is not a signature algorithm, so it does not match the key.",
-            error_details=[f"OID {may_return_oid_to_name(alg_id['algorithm'])}; key {type(key).__name__}"],
+            error_details=[f"{exc}; key {type(key).__name__}"],
         ) from exc
     _check_key_matches(info, key)
 

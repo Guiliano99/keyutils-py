@@ -47,6 +47,36 @@ SPDX-License-Identifier: Apache-2.0 -->
   and is run by hand from a cmp-test-suite checkout.
 - `ALG_OID_2_NAME`, one OID -> name table for every OID the tables of `keyutils_py.oids` name. It is built from OID
   -> name tables only and has no entry that maps a name to an OID, unlike `ALL_KNOWN_OIDS_2_NAME` of cmp-test-suite.
+- `keyutils_py.oids.SIG_ALG_OID_2_INFO`: one `SigAlgInfo` row for every signature OID (81: the 80 OIDs of
+  `SIG_ALG_OID_2_PARAMETERS_SPEC` and `rsaEncryption`, RFC 3370 Section 3.2), derived once at import from the OID
+  tables. A row names the family, the key that may use it, the hash, whether the OID is a pre-hash OID (HashML-DSA,
+  HashSLH-DSA), whether it is RSASSA-PSS, the shape of the parameters and the CMS `digestAlgorithm`. Signing,
+  verifying, the consistency check and the identifier builder all read it. `tests/golden/sig_alg_table.tsv` holds the
+  rows as written from the RFCs (`tests/golden/generate_sig_alg_table.py`), not derived from the code.
+  A new algorithm of a known family needs its OID in the family table and one golden row.
+- `get_sig_alg_info(alg_id, *, strict=False)` returns the row of a signature OID or `AlgorithmIdentifier`; for
+  `id-RSASSA-PSS` it reads hash, MGF1 hash and salt length from the parameters with the DEFAULT values of RFC 4055
+  Section 3.1. `list_algorithms("sig")` (`keyutils_py.algorithms`) returns all rows sorted by OID; another kind
+  raises `ValueError` naming the known kinds.
+- `sign_with_alg_id` and `verify_signature_with_alg_id` take the keyword-only `hash_alg`, the hash for `rsaEncryption`
+  (it names none), which is accepted as an identifier of RSA PKCS#1 v1.5.
+- `validate_sig_alg_id(alg_id, *, strict=True)`: `strict=False` is the rule of verifiers (absent parameters on the
+  PKCS#1 v1.5 identifiers are accepted, RFC 4055 Section 5, RFC 5754 Section 3.2).
+- `prepare_hash_alg_id(..., *, with_null=None)`: `False` writes absent parameters (RFC 5754 Section 2), `True` NULL
+  (SHA-1 and SHA-2 only; `ValueError` for SHA-3 and SHAKE), `None` keeps the bytes written before.
+- `prepare_sig_alg_id` builds the identifier for every signature key: ML-DSA, SLH-DSA (with the pre-hash OID if the
+  hash is one that the key registers), Falcon, HSS, XMSS, XMSS^MT and composite keys (`use_rsa_pss` selects the
+  `-pss` OID).
+- Exported from `keyutils_py` as well (the names that other code imported by module path): `encode_to_der`,
+  `try_decode_pyasn1`, `BadAsn1Data`, `BadAlg`, `BadSigAlgID`, `BadSigAlgIDParams`, `KeyUtilsError`,
+  `prepare_sig_alg_id`, `prepare_hash_alg_id`, `get_hash_from_oid`, `sha_alg_name_to_oid`, `RSA_OID_2_NAME`,
+  `PublicKey`, `SignKey`, `VerifyKey`, `TradVerifyKey` and `DSAPublicKey`, plus `SigAlgInfo`, `SIG_ALG_OID_2_INFO`,
+  `get_sig_alg_info` and `list_algorithms`. The module paths keep working. `tests/test_public_api.py` pins
+  `keyutils_py.__all__` and the signatures of the signature entry points against `tests/golden/public_api.tsv`.
+- `tests/test_negative_output.py` shows that every deviation a negative test makes (flipped, longer, shorter,
+  omitted signature; random or NULL parameters; other hash, other OID, other padding, unknown OID, broken or other PSS
+  parameters; other key; other context; omitted identifier; legacy SHA-1 and DSA) is produced by explicit calls on a
+  valid pair, and that every one is refused as a verifier refuses it.
 
 ## Changed
 
@@ -64,6 +94,34 @@ SPDX-License-Identifier: Apache-2.0 -->
   agreement, curve and PBKDF2/KDF2/KDF3 OIDs still come back as the dotted string.
 - The version is `0.1.0`. An SPKI or PKCS#8 key with the old RSA-KEM OID is not accepted any more (see Fixed), so
   `0.0.2` is not compatible with it.
+- Breaking for consumers of `sign_data`, `verify_signature`, `sign_with_alg_id`, `verify_signature_with_alg_id`,
+  `check_consistency_sig_alg_id_and_key`, `validate_sig_alg_id` and `prepare_sig_alg_id` that pin an older commit
+  (nothing changes until they bump):
+  - `verify_signature_with_alg_id` verifies `sha1WithRSAEncryption` (was `BadAlg`). Refusing SHA-1 is a policy of the
+    caller: `get_sig_alg_info(alg_id).hash_alg == "sha1"`.
+  - A PQ, stateful-hash or composite key with an OID of another family or another parameter set raises `BadSigAlgID`
+    in `sign_with_alg_id` and `verify_signature_with_alg_id` (it signed and verified under any OID, or raised
+    `TypeError` for a composite OID). An ML-DSA key with an ML-DSA OID of another parameter set and a composite key
+    with the OID of another combination are refused the same way.
+  - A pre-hash OID (`id-ml-dsa-44-with-sha512`, the HashSLH-DSA OIDs) signs and verifies in pre-hash mode and a
+    composite `-pss` OID signs and verifies with RSASSA-PSS. Signatures made under these OIDs by the older versions
+    (pure mode, PKCS#1 v1.5) no longer verify under them.
+  - `check_consistency_sig_alg_id_and_key`: an RSA key matches `id-RSASSA-PSS` and `rsaEncryption` (was `BadSigAlgID`);
+    a PQ key with a composite OID, a composite key with a classic OID and a key that is no signature key give
+    `BadSigAlgID` (were `TypeError`, `ValueError` and `ValueError`).
+  - `validate_sig_alg_id` accepts `rsaEncryption` with NULL (was `BadAlg`) and refuses RSASSA-PSS parameters with a MGF1
+    hash that differs from the hash or a trailerField other than 1 (was accepted). Its default stays strict.
+  - `sign_with_alg_id` and `verify_signature_with_alg_id` accept PKCS#1 v1.5 identifiers without parameters (were
+    `BadSigAlgIDParams`) and raise `BadSigAlgID` if `hash_alg` contradicts the hash of the OID.
+  - `sign_data` and `verify_signature` have no default hash: ECDSA, DSA and RSA raise `ValueError` without
+    `hash_alg` (they signed with SHA-256, and verified with SHA-256 silently). Their options are keyword-only, an
+    unknown keyword is a `TypeError` (it was ignored), the composite keyword `use_pss` is `use_rsa_pss`, and RSA
+    keys are signed with PKCS#1 v1.5 (was `NotImplementedError`).
+  - `prepare_sig_alg_id(key, hash_alg=None, use_rsa_pss=False)`: the default is `None`, which is still `sha256` for
+    RSA, ECDSA and DSA (same bytes), and an SLH-DSA key without a hash now gets the pure OID.
+- `SIG_ALG_OID_2_PARAMETERS_SPEC` is derived from the signature algorithm table and has the 81 entries of its rows.
+- The private `compute._validate_sig_alg_id`, `compute._resolve_sig_alg_name`, `compute._check_eddsa_oid_matches_key` and
+  `keyutils._check_trad_sig_alg_id` are gone; their checks are in `get_sig_alg_info` and `compute._check_key_matches`.
 
 ## Fixed
 
@@ -96,6 +154,15 @@ SPDX-License-Identifier: Apache-2.0 -->
   implementation loads, where `load_public_key_from_spki` raised `UnsupportedAlgorithm` before. The old OID is not
   accepted any more: keys written by `0.0.2` with it have to be written again. `1.2.840.113549.1.9.16.3.14` is named
   `rsa-kem` by `may_return_oid_to_name`, like `1.0.18033.2.2.4` (`id-kem-rsa`, the KEM algorithm itself).
+- RSASSA-PSS with a salt length of 0 is signed and verified with a salt of length 0 (`salt_length or digest_size`
+  replaced it by the digest size, RFC 4055 Section 3.1). `sign_data_rsa_pss`, `sign_data`, `verify_signature`,
+  `verify_rsassa_pss_from_alg_id` and the identifier functions honour it, SHAKE variants too.
+- An `id-RSASSA-PSS` identifier that omits `hashAlgorithm`, `maskGenAlgorithm` or `saltLength` is read with the DEFAULT
+  values of RFC 4055 Section 3.1; before, `verify_signature_with_alg_id` raised a raw `PyAsn1Error`.
+- `sign_data` and `verify_signature` support RSA PKCS#1 v1.5 and RSASSA-PSS with SHA-1, SHA-2, SHA-3 and SHAKE for
+  RSA keys, and composite keys take `use_rsa_pss` and `ctx` (`TypeError` before).
+- `get_sig_alg_info`, `validate_sig_alg_id` and `sign_with_alg_id` raise `BadAlg` for an `AlgorithmIdentifier` without
+  an OID instead of a `PyAsn1Error`.
 
 # 0.0.2
 

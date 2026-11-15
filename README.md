@@ -109,14 +109,28 @@ spki = prepare_spki(for_kga=True, key_name="rsa")  # empty-key SPKI
 ### 6. AlgorithmIdentifier-driven sign/verify
 
 ```python
-from keyutils_py import sign_with_alg_id, verify_signature_with_alg_id, validate_sig_alg_id
-from keyutils_py.rsa_pss import prepare_rsa_pss_alg_id
+from keyutils_py import (
+    get_sig_alg_info,
+    prepare_sig_alg_id,
+    sign_with_alg_id,
+    validate_sig_alg_id,
+    verify_signature_with_alg_id,
+)
+from keyutils_py.keyutils import prepare_rsa_pss_alg_id
 
-alg_id = prepare_rsa_pss_alg_id("sha256")
-validate_sig_alg_id(alg_id)  # raises BadSigAlgIDParams if malformed
-sig = sign_with_alg_id(rsa_key, alg_id, b"data")
+alg_id = prepare_rsa_pss_alg_id("sha256", salt_length=0)
+validate_sig_alg_id(alg_id)  # raises BadSigAlgIDParams if malformed; strict=False is the verifier's rule
+sig = sign_with_alg_id(rsa_key, alg_id, b"data")  # hash and salt length come from the parameters
 verify_signature_with_alg_id(rsa_key.public_key(), alg_id, b"data", sig)
+get_sig_alg_info(alg_id).salt_length  # 0: the row of the OID, read from the parameters
+
+alg_id = prepare_sig_alg_id(ml_dsa_key, "sha512")  # the HashML-DSA OID; the OID decides the signing mode
 ```
+
+The OID decides how a signature is made: a pre-hash OID signs in pre-hash mode, a composite `-pss` OID signs with
+RSASSA-PSS, and a key with the OID of another family or parameter set raises `BadSigAlgID`. `sign_data` and
+`verify_signature` choose the algorithm from the key instead and need `hash_alg=` for RSA, ECDSA and DSA keys (no
+default hash).
 
 ### 7. Estimate security strength
 
@@ -147,7 +161,8 @@ The everyday surface lives at the top level:
 | Concern | Functions |
 |---|---|
 | Lifecycle | `generate_key`, `save_key`, `load_private_key_from_file`, `load_public_key_from_file` |
-| Signing | `sign_data`, `verify_signature`, `sign_with_alg_id`, `verify_signature_with_alg_id`, `validate_sig_alg_id` |
+| Signing | `sign_data`, `verify_signature`, `sign_with_alg_id`, `verify_signature_with_alg_id`, `validate_sig_alg_id`, `prepare_sig_alg_id` |
+| Signature algorithm table | `get_sig_alg_info`, `list_algorithms("sig")`, `SIG_ALG_OID_2_INFO`, `SigAlgInfo` |
 | KEMs / ECDH | `compute_encaps`, `compute_decaps`, `compute_ecdh` |
 | SPKI | `prepare_spki` |
 | Inspection | `get_key_name`, `estimate_key_security_strength` |
