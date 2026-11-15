@@ -190,7 +190,7 @@ class TestPrepareSpki(unittest.TestCase):
         """GIVEN RSA + key_name=rsa-kem / WHEN preparing SPKI / THEN rsa-kem-spki OID."""
         priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         spki = prepare_spki(priv, key_name="rsa-kem")
-        self.assertEqual(str(spki["algorithm"]["algorithm"]), "1.2.840.113549.1.9.16.3")
+        self.assertEqual(str(spki["algorithm"]["algorithm"]), "1.2.840.113549.1.9.16.3.14")
 
     def test_for_kga_rsa(self):
         """GIVEN for_kga + key_name=rsa / WHEN preparing SPKI / THEN empty bitstring + rsa OID."""
