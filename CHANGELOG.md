@@ -86,6 +86,15 @@ SPDX-License-Identifier: Apache-2.0 -->
   two rows, `hMAC-SHA1` (RFC 3370) and `id-hmacWithSHA1` (RFC 8018, the default pseudorandom function of PBKDF2).
   `tests/golden/alg_tables.tsv` holds the 55 rows as written from the RFCs (`tests/golden/generate_alg_tables.py`,
   which also checks every OID against `pyasn1_alt_modules`), not derived from the code.
+- `keyutils_py.primitives`, the keyless lower layer: HKDF (SHA-1, SHA-2, SHA-3), KDF2 (X9.63), KDF3, PBKDF2, HMAC,
+  KMAC128/256, AES-GMAC, AES key wrap (RFC 3394) and key wrap with padding (RFC 5649), AES-CBC with PKCS#7 padding and
+  AES-GCM, each by the name of its hash and on plain bytes, with no `AlgorithmIdentifier`, no OID and no table. It is
+  importable but neither in `__all__` nor in the API snapshot: it is how a test makes what the identifier-driven
+  functions refuse (a KEK that does not fit the key wrap OID) and how it checks them. It imports `cryptography`,
+  `pycryptodome` and `keyutils_py.exceptions` only, which a test checks.
+- `BadAlgParams` (the parameters of a known algorithm are absent, present wrongly or inconsistent) and `IntegrityError`
+  (a key unwrap, CBC padding, GCM tag or MAC does not verify; the message does not say why) in
+  `keyutils_py.exceptions`. Both derive from `KeyUtilsError`.
 
 ## Changed
 

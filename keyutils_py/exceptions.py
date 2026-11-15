@@ -68,6 +68,23 @@ class BadAlg(KeyUtilsError):
     bit_num = 0
 
 
+class BadAlgParams(KeyUtilsError):
+    """Raised when the parameters of a known algorithm are absent, present wrongly or inconsistent.
+
+    Examples: parameters on an AES key wrap identifier, a PBKDF2 ``keyLength`` that differs from the requested length,
+    a KEK whose size does not match the key wrap OID, trailing data after the parameters. An OID that is in no table
+    is :class:`BadAlg`; parameters that cannot be decoded are :class:`BadAsn1Data`.
+    """
+
+
+class IntegrityError(KeyUtilsError):
+    """Raised when a check value, tag or padding of received data does not verify.
+
+    AES key unwrap, an AES-GCM tag, AES-CBC padding and a MAC comparison all raise it. The message names the
+    operation and nothing about why it failed, so that it is no oracle.
+    """
+
+
 class BadSigAlgID(KeyUtilsError):
     """Raised when the algorithm identifier and signing key do not match."""
 
