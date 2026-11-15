@@ -185,12 +185,21 @@ class TestStrictOidKeyBinding(unittest.TestCase):
 class TestGenericDispatch(unittest.TestCase):
     """sign_data / verify_signature now cover EC (hashed) and EdDSA keys directly."""
 
-    def test_ec_default_hash(self):
-        """GIVEN an EC key / WHEN sign_data with no hash_alg / THEN ECDSA-SHA256 round-trips."""
+    def test_ec_without_hash_is_an_error(self):
+        """GIVEN an EC key / WHEN sign_data or verify_signature has no hash_alg / THEN ValueError, no silent SHA-256."""
         key = ec.generate_private_key(ec.SECP256R1())
-        msg = b"generic ecdsa default"
-        sig = sign_data(msg, key)
-        verify_signature(key.public_key(), sig, msg)
+        sig = sign_data(b"generic ecdsa", key, hash_alg="sha256")
+        with self.assertRaises(ValueError):
+            sign_data(b"generic ecdsa", key)
+        with self.assertRaises(ValueError):
+            verify_signature(key.public_key(), sig, b"generic ecdsa")
+
+    def test_ec_sha256(self):
+        """GIVEN an EC key + hash_alg=sha256 / WHEN sign_data→verify_signature / THEN round-trips, cryptography too."""
+        key = ec.generate_private_key(ec.SECP256R1())
+        msg = b"generic ecdsa sha256"
+        sig = sign_data(msg, key, hash_alg="sha256")
+        verify_signature(key.public_key(), sig, msg, hash_alg="sha256")
         key.public_key().verify(sig, msg, ec.ECDSA(hashes.SHA256()))
 
     def test_ec_explicit_hash(self):
@@ -205,10 +214,10 @@ class TestGenericDispatch(unittest.TestCase):
         """GIVEN a generic EC signature / WHEN a byte is flipped / THEN InvalidSignature."""
         key = ec.generate_private_key(ec.SECP256R1())
         msg = b"generic ecdsa"
-        tampered = bytearray(sign_data(msg, key))
+        tampered = bytearray(sign_data(msg, key, hash_alg="sha256"))
         tampered[-1] ^= 0x01
         with self.assertRaises(InvalidSignature):
-            verify_signature(key.public_key(), bytes(tampered), msg)
+            verify_signature(key.public_key(), bytes(tampered), msg, hash_alg="sha256")
 
     def test_ed25519_round_trip(self):
         """GIVEN an Ed25519 key / WHEN sign_data→verify_signature / THEN round-trips."""
@@ -243,7 +252,7 @@ class TestDsaSign(unittest.TestCase):
     def test_sign_data_native_verify(self):
         """GIVEN a generated DSA key / WHEN sign_data / THEN cryptography verifies it natively."""
         msg = b"dsa sign+verify"
-        sig = sign_data(msg, self.key)
+        sig = sign_data(msg, self.key, hash_alg="sha256")
         # Verify through the wrapper's cryptography-shaped API (HashAlgorithm instance accepted).
         self.key.public_key().verify(sig, msg, hashes.SHA256())
 
@@ -255,7 +264,7 @@ class TestDsaSign(unittest.TestCase):
     def test_sign_data_tampered_rejected(self):
         """GIVEN a DSA signature / WHEN a byte is flipped / THEN native verify raises InvalidSignature."""
         msg = b"dsa tamper"
-        tampered = bytearray(sign_data(msg, self.key))
+        tampered = bytearray(sign_data(msg, self.key, hash_alg="sha256"))
         tampered[-1] ^= 0x01
         with self.assertRaises(InvalidSignature):
             self.key.public_key().verify(bytes(tampered), msg, hashes.SHA256())

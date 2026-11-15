@@ -63,6 +63,7 @@ from keyutils_py.keys.abstract_wrapper_keys import (
     KEMPublicKey,
 )
 from keyutils_py.keys.composite_kem import CompositeKEMPrivateKey, CompositeKEMPublicKey
+from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigPublicKey
 from keyutils_py.keys.trad_kem_keys import DHKEMPublicKey, RSADecapKey, RSAEncapKey
 from keyutils_py.oids import (
     COMPOSITE_SIG_OID_TO_NAME,
@@ -154,7 +155,11 @@ def sign_data_rsa_pss(
     salt_length: Optional[int] = None,
     second_hash_alg: Optional[str] = None,
 ) -> bytes:
-    """Sign ``data`` with RSASSA-PSS (SHA-* via cryptography, SHAKE via PyCryptodome)."""
+    """Sign ``data`` with RSASSA-PSS (SHA-* via cryptography, SHAKE via PyCryptodome).
+
+    :param salt_length: The salt length in bytes; ``None`` is the digest size, ``0`` is a salt of length 0.
+    :param second_hash_alg: The hash of the message if it differs from the MGF1 hash (negative tests).
+    """
     if hash_alg in {"shake128", "shake256"}:
         return _sign_data_rsa_pss_shake(private_key, data, hash_alg, salt_length)
 
@@ -163,7 +168,7 @@ def sign_data_rsa_pss(
     second_hash_algorithm = hash_name_to_instance(second_hash_alg) if second_hash_alg else hash_algorithm
     pss_padding = padding.PSS(
         mgf=padding.MGF1(hash_algorithm),
-        salt_length=salt_length or hash_algorithm.digest_size,
+        salt_length=hash_algorithm.digest_size if salt_length is None else salt_length,
     )
     return private_key.sign(data=data, padding=pss_padding, algorithm=second_hash_algorithm)
 
@@ -262,14 +267,21 @@ def verify_rsassa_pss_shake(
         raise BadDataFormat("RSASSA-PSS-SHAKE: `parameters` must be absent.")
 
     if alg_id["algorithm"] == rfc9481.id_RSASSA_PSS_SHAKE128:
-        hash_for_verifying = FixedSHAKE128.new(data)
+        hash_alg = "shake128"
     elif alg_id["algorithm"] == rfc9481.id_RSASSA_PSS_SHAKE256:
-        hash_for_verifying = FixedSHAKE256.new(data)
+        hash_alg = "shake256"
     else:
         raise BadAlg(f"Unsupported SHAKE-PSS OID: {alg_id['algorithm']}.")
+    _verify_rsa_pss_shake(public_key, data, signature, hash_alg, salt_length)
 
-    n, e = public_key.public_numbers().n, public_key.public_numbers().e
-    pub_key_tmp = RSA.construct((n, e))
+
+def _verify_rsa_pss_shake(
+    public_key: rsa.RSAPublicKey, data: bytes, signature: bytes, hash_alg: str, salt_length: Optional[int]
+) -> None:
+    """Verify RSASSA-PSS-SHAKE128 / SHAKE256 via PyCryptodome; ``None`` is the digest size, ``0`` a salt of length 0."""
+    hash_for_verifying = FixedSHAKE128.new(data) if hash_alg == "shake128" else FixedSHAKE256.new(data)
+    numbers = public_key.public_numbers()
+    pub_key_tmp = RSA.construct((numbers.n, numbers.e))
     if salt_length is None:
         salt_length = hash_for_verifying.digest_size
 
@@ -285,105 +297,153 @@ def verify_rsassa_pss_shake(
 # ---------------------------------------------------------------------------
 
 
-def sign_data(data: bytes, key: SignKey, **kwargs) -> bytes:
-    """Sign ``data`` with a signature private key.
+def _require_hash(hash_alg: Optional[str], key: object) -> str:
+    """Return ``hash_alg``; a family that signs a hash has no default, so ``None`` is an error.
 
-    Dispatches on the type of ``key``:
+    :raises ValueError: If ``hash_alg`` is ``None``.
+    """
+    if hash_alg is None:
+        raise ValueError(f"A {type(key).__name__} signature needs a hash algorithm: pass `hash_alg`, e.g. 'sha256'.")
+    return hash_alg
+
+
+def sign_data(
+    data: bytes,
+    key: SignKey,
+    *,
+    hash_alg: Optional[str] = None,
+    ctx: bytes = b"",
+    use_rsa_pss: bool = False,
+    salt_length: Optional[int] = None,
+    second_hash_alg: Optional[str] = None,
+) -> bytes:
+    """Sign ``data`` with the algorithm that ``key`` is, and the options given by name.
+
+    This is the one place that looks at the class of the key. It never reads an ``AlgorithmIdentifier``;
+    :func:`sign_with_alg_id` does, and calls this function. There is no default hash: a key family that signs a
+    hash needs ``hash_alg``. Dispatches on the type of ``key``:
 
     * Stateful-hash keys (HSS / XMSS / XMSSMT) sign the message bytes directly.
-    * PQ signatures (ML-DSA / SLH-DSA / Falcon) honour the ``hash_alg`` and
-      ``ctx`` keyword arguments.
-    * Composite-sig (hybrid) keys delegate to :meth:`CompositeSigPrivateKey.sign`.
-    * :class:`rsa.RSAPrivateKey` with ``use_rsa_pss=True`` uses RSASSA-PSS padding
-      (``hash_alg``, ``salt_length`` and ``second_hash_alg`` are forwarded).
-    * :class:`ec.EllipticCurvePrivateKey` produces an ECDSA signature; the digest
-      defaults to ``sha256`` and may be overridden via ``hash_alg``.
-    * Ed25519 / Ed448 keys sign the message directly (no ``hash_alg``).
-    * :class:`DSAPrivateKey` produces a DSA signature; the digest defaults to
-      ``sha256`` and may be overridden via ``hash_alg``.
+    * PQ signatures (ML-DSA / SLH-DSA / Falcon) take ``ctx``; ``hash_alg`` selects the pre-hash mode
+      (HashML-DSA, HashSLH-DSA) and is optional.
+    * Composite-sig (hybrid) keys take ``ctx`` and ``use_rsa_pss`` (the RSASSA-PSS variant of the combination);
+      ``hash_alg`` is ignored, the draft fixes the hash.
+    * RSA keys sign PKCS#1 v1.5 with ``hash_alg``, or RSASSA-PSS with ``use_rsa_pss=True`` (``hash_alg``,
+      ``salt_length``, ``second_hash_alg``; SHAKE128 and SHAKE256 are possible).
+    * EC and DSA keys need ``hash_alg``.
+    * Ed25519 / Ed448 keys sign the message directly.
 
     :param data: The message bytes to sign.
     :param key: The signature private key selecting the algorithm.
-    :param kwargs: Algorithm-specific options: ``hash_alg``, ``ctx``,
-        ``use_rsa_pss``, ``salt_length`` and ``second_hash_alg``.
+    :param hash_alg: The hash name, e.g. ``sha256``.
+    :param ctx: The context string of ML-DSA, SLH-DSA and composite signatures.
+    :param use_rsa_pss: Sign with RSASSA-PSS (RSA keys) or with the PSS combination (composite keys).
+    :param salt_length: The RSASSA-PSS salt length in bytes: ``None`` is the digest size, ``0`` is a salt of
+        length 0.
+    :param second_hash_alg: RSASSA-PSS only: the hash of the message if it differs from the MGF1 hash, to build
+        a signature that the RFC 4056 profile refuses.
+    :raises ValueError: If the key family needs a hash and ``hash_alg`` is ``None``, or ``hash_alg`` is unknown.
     :raises NotImplementedError: If ``key`` is not a supported signature key type.
     """
     if isinstance(key, PQHashStatefulSigPrivateKey):
         require_oqs_if_needed(key.name)
         return key.sign(data)
-    if isinstance(key, HybridSigPrivateKey):
-        return key.sign(data, **kwargs)
+    if isinstance(key, CompositeSigPrivateKey):
+        return key.sign(data, ctx=ctx, use_pss=use_rsa_pss)
     if isinstance(key, PQSignaturePrivateKey):
         require_oqs_if_needed(key.name)
-        hash_alg = key.check_hash_alg(kwargs.get("hash_alg"))
-        ctx = kwargs.get("ctx", b"")
-        return key.sign(data, hash_alg=hash_alg, ctx=ctx)
-    if isinstance(key, rsa.RSAPrivateKey) and kwargs.get("use_rsa_pss"):
-        return sign_data_rsa_pss(
-            private_key=key,
-            data=data,
-            hash_alg=kwargs.get("hash_alg"),
-            salt_length=kwargs.get("salt_length"),
-            second_hash_alg=kwargs.get("second_hash_alg"),
-        )
+        return key.sign(data, hash_alg=key.check_hash_alg(hash_alg), ctx=ctx)
+    if isinstance(key, rsa.RSAPrivateKey):
+        hash_alg = _require_hash(hash_alg, key)
+        if use_rsa_pss:
+            return sign_data_rsa_pss(
+                private_key=key, data=data, hash_alg=hash_alg, salt_length=salt_length, second_hash_alg=second_hash_alg
+            )
+        return key.sign(data, padding.PKCS1v15(), hash_name_to_instance(hash_alg))
     if isinstance(key, ec.EllipticCurvePrivateKey):
-        hash_alg = kwargs.get("hash_alg") or "sha256"
-        return key.sign(data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+        return key.sign(data, ec.ECDSA(hash_name_to_instance(_require_hash(hash_alg, key))))
     if isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
         return key.sign(data)
     if isinstance(key, DSAPrivateKey):
-        return key.sign(data, kwargs.get("hash_alg") or "sha256")
+        return key.sign(data, _require_hash(hash_alg, key))
     raise NotImplementedError(f"{type(key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
 
-def verify_signature(public_key: VerifyKey, signature: bytes, data: bytes, **kwargs) -> None:
-    """Verify ``signature`` over ``data`` with a signature public key.
+def verify_signature(
+    public_key: VerifyKey,
+    signature: bytes,
+    data: bytes,
+    *,
+    hash_alg: Optional[str] = None,
+    ctx: bytes = b"",
+    use_rsa_pss: bool = False,
+    salt_length: Optional[int] = None,
+    use_pre_hash: bool = False,
+) -> None:
+    """Verify ``signature`` over ``data`` with the algorithm that ``public_key`` is.
 
-    The verification counterpart of :func:`sign_data`, dispatching on the type
-    of ``public_key``:
+    The verification counterpart of :func:`sign_data`, with the same options by the same names and without a
+    default hash. Dispatches on the type of ``public_key``:
 
-    * PQ signatures honour the ``hash_alg``, ``ctx`` and ``use_pre_hash`` options.
-    * :class:`ec.EllipticCurvePublicKey` verifies an ECDSA signature; the digest
-      defaults to ``sha256`` and may be overridden via ``hash_alg``.
-    * Ed25519 / Ed448 keys verify the message directly.
-    * :class:`DSAPublicKey` verifies a DSA signature; the digest defaults to
-      ``sha256`` and may be overridden via ``hash_alg``.
+    * Stateful-hash keys verify the message bytes directly.
+    * PQ signatures take ``ctx``, ``hash_alg`` (pre-hash mode) and ``use_pre_hash`` (``data`` is already hashed).
+    * Composite-sig keys take ``ctx`` and ``use_rsa_pss``; ``hash_alg`` is ignored.
+    * RSA keys verify PKCS#1 v1.5 with ``hash_alg``, or RSASSA-PSS with ``use_rsa_pss=True`` (``hash_alg`` and
+      ``salt_length``; SHAKE128 and SHAKE256 are possible).
+    * EC and DSA keys need ``hash_alg``. Ed25519 / Ed448 keys verify the message directly.
 
     :param public_key: The signature public key selecting the algorithm.
     :param signature: The signature bytes to check.
     :param data: The message bytes the signature is over.
-    :param kwargs: Algorithm-specific options: ``hash_alg``, ``ctx`` and
-        ``use_pre_hash``.
+    :param hash_alg: The hash name, e.g. ``sha256``.
+    :param ctx: The context string of ML-DSA, SLH-DSA and composite signatures.
+    :param use_rsa_pss: Verify RSASSA-PSS (RSA keys) or the PSS combination (composite keys).
+    :param salt_length: The RSASSA-PSS salt length in bytes: ``None`` is the digest size, ``0`` is a salt of
+        length 0.
+    :param use_pre_hash: ML-DSA / SLH-DSA only: ``data`` is the hash of the message.
     :raises cryptography.exceptions.InvalidSignature: If the signature does not verify.
+    :raises ValueError: If the key family needs a hash and ``hash_alg`` is ``None``, or ``hash_alg`` is unknown.
     :raises NotImplementedError: If ``public_key`` is not a supported signature key type.
     """
     if isinstance(public_key, PQHashStatefulSigPublicKey):
         require_oqs_if_needed(public_key.name)
         public_key.verify(data=data, signature=signature)
         return
-    if isinstance(public_key, HybridSigPublicKey):
-        public_key.verify(signature=signature, data=data, **kwargs)
+    if isinstance(public_key, CompositeSigPublicKey):
+        public_key.verify(signature=signature, data=data, ctx=ctx, use_pss=use_rsa_pss)
         return
     if isinstance(public_key, PQSignaturePublicKey):
         require_oqs_if_needed(public_key.name)
-        hash_alg = public_key.check_hash_alg(kwargs.get("hash_alg"))
         public_key.verify(
             signature=signature,
             data=data,
-            hash_alg=hash_alg,
-            is_prehashed=kwargs.get("use_pre_hash", False),
-            ctx=kwargs.get("ctx", b""),
+            hash_alg=public_key.check_hash_alg(hash_alg),
+            is_prehashed=use_pre_hash,
+            ctx=ctx,
         )
         return
+    if isinstance(public_key, rsa.RSAPublicKey):
+        hash_alg = _require_hash(hash_alg, public_key)
+        if use_rsa_pss and hash_alg in {"shake128", "shake256"}:
+            _verify_rsa_pss_shake(public_key, data, signature, hash_alg, salt_length)
+        elif use_rsa_pss:
+            hash_algorithm = hash_name_to_instance(hash_alg)
+            pss_padding = padding.PSS(
+                mgf=padding.MGF1(hash_algorithm),
+                salt_length=hash_algorithm.digest_size if salt_length is None else salt_length,
+            )
+            public_key.verify(signature, data, pss_padding, hash_algorithm)
+        else:
+            public_key.verify(signature, data, padding.PKCS1v15(), hash_name_to_instance(hash_alg))
+        return
     if isinstance(public_key, ec.EllipticCurvePublicKey):
-        hash_alg = kwargs.get("hash_alg") or "sha256"
-        public_key.verify(signature, data, ec.ECDSA(hash_name_to_instance(hash_alg)))
+        public_key.verify(signature, data, ec.ECDSA(hash_name_to_instance(_require_hash(hash_alg, public_key))))
         return
     if isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
         public_key.verify(signature, data)
         return
     if isinstance(public_key, DSAPublicKey):
-        public_key.verify(signature, data, kwargs.get("hash_alg") or "sha256")
+        public_key.verify(signature, data, _require_hash(hash_alg, public_key))
         return
     raise NotImplementedError(f"{type(public_key).__name__}: {NOT_IMPLEMENTED_HINT}")
 
