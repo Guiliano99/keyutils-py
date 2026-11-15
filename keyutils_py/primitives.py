@@ -120,8 +120,8 @@ def kmac(shake: str, key: bytes, data: bytes, *, mac_len: int, custom: bytes = b
     """Return KMAC128 (``shake="shake128"``) or KMAC256 (``"shake256"``) of NIST SP 800-185 with ``mac_len`` octets.
 
     :raises BadAlg: If ``shake`` is neither of the two names.
-    :raises ValueError: If the key is shorter than the security strength (16 octets for KMAC128, 32 for KMAC256), the
-        limit of ``pycryptodome``.
+    :raises ValueError: If the key is shorter than the security strength (16 octets for KMAC128, 32 for KMAC256) or
+        ``mac_len`` is below 8 octets, the limits of ``pycryptodome``. The package adds none.
     """
     if shake not in _KMAC:
         raise BadAlg(f"KMAC is defined over shake128 and shake256, not {shake!r}.")

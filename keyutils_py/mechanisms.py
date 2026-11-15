@@ -20,6 +20,12 @@ A mechanism validates what it applies, and is strict about it as a receiver:
 
 Parameters are read once, against the specification of the algorithm, from DER bytes (``univ.Any``) or from an
 already decoded object of that specification.
+
+The parameters of a received structure also decide how strong or how expensive a check is, so the mechanisms refuse
+values outside four limits, named below, before any computation: a PBMAC1 ``keyLength`` outside 16 to 4096 octets, a
+KMAC ``kMACOutputLength`` below 128 bits, and a PBKDF2 work above 25 000 000 blocks (besides the cap of
+``MAX_PBKDF2_ITERATIONS`` on the iterations). They are fail-closed defaults for received parameters. The functions of
+:mod:`keyutils_py.primitives` have none of them, which is how a test makes a short key or tag on purpose.
 """
 
 from __future__ import annotations
@@ -54,6 +60,17 @@ __all__ = [
 ]
 
 AlgId = rfc9480.AlgorithmIdentifier
+
+# Limits on received parameters (fail-closed defaults; see the module docstring). Every one is checked before the
+# derivation or the MAC is computed.
+MIN_PBMAC1_KEY_LENGTH = 16
+"""The least ``keyLength`` of PBMAC1 in octets: the MAC key has that length, and a 1 octet key falls in 256 tries."""
+MAX_PBMAC1_KEY_LENGTH = 4096
+"""The greatest ``keyLength`` of PBMAC1 in octets (a known peer, CmpRaComponent 4.3.0, defaults to 4096)."""
+MIN_KMAC_OUTPUT_BITS = 128
+"""The least ``kMACOutputLength`` of KMAC in bits; an 8 bit output is a 1 in 256 forgery. There is no upper cap."""
+MAX_PBKDF2_WORK = 25_000_000
+"""The most PBKDF2 work, ``iterations * ceil(keyLength / digest size of the prf hash)``, that a mechanism starts."""
 
 # The hashes whose AlgorithmIdentifier carries NULL or no parameters (RFC 5754 Section 2); SHA-3 must have none
 # (RFC 9688 Section 2).
@@ -190,6 +207,19 @@ def _read_pbkdf2(kdf: Any) -> _Pbkdf2:
     return _Pbkdf2(salt["specified"].asOctets(), iterations, key_length, row.hash)
 
 
+def _check_pbkdf2_work(prf_hash: str, iterations: int, key_length: int) -> None:
+    """Raise ``BadAlgParams`` if PBKDF2 would need more than ``MAX_PBKDF2_WORK`` blocks (RFC 8018 Section 5.2).
+
+    One block is one run of ``iterations`` HMAC calls, and ``ceil(key_length / digest size)`` blocks are needed.
+    """
+    blocks = -(-key_length // _HASH_REGISTRY[prf_hash][1].digest_size)
+    if iterations * blocks > MAX_PBKDF2_WORK:
+        raise BadAlgParams(
+            f"PBKDF2 with {iterations} iterations over {blocks} blocks needs {iterations * blocks} rounds, "
+            f"more than the limit of {MAX_PBKDF2_WORK}."
+        )
+
+
 def _derive_hkdf(row: KdfRow, kdf: Any, secret: bytes, length: int, info: bytes) -> bytes:
     """HKDF (RFC 5869) with the hash of the OID, no salt; the parameters must be absent (RFC 8619, RFC 9688)."""
     _require_absent(kdf, "HKDF")
@@ -212,6 +242,7 @@ def _derive_pbkdf2(row: KdfRow, kdf: Any, secret: bytes, length: int, info: byte
     params = _read_pbkdf2(kdf)
     if params.key_length is not None and params.key_length != length:
         raise BadAlgParams(f"PBKDF2 keyLength {params.key_length} differs from the requested length {length}.")
+    _check_pbkdf2_work(params.prf_hash, params.iterations, length)
     return primitives.pbkdf2(params.prf_hash, secret, params.salt, params.iterations, length)
 
 
@@ -236,8 +267,10 @@ def kdf_derive(kdf: AlgId, secret: bytes, length: int, info: bytes = b"") -> byt
       SHA-3 (SHA-1 and SHA-2 with NULL or no parameters, SHA-3 with none); SHAKE is :class:`BadAlg`.
     * PBKDF2 (RFC 8018 Appendix A.2): ``PBKDF2-params``, decoded as that structure also after a DER round trip. The salt
       must be ``specified`` (``otherSource`` is :class:`BadAlg`); ``keyLength``, if present, must equal ``length``;
-      an absent ``prf`` is HMAC-SHA-1, the DEFAULT; the iteration count is capped at ``MAX_PBKDF2_ITERATIONS``.
-      PBKDF2 takes no ``info``: a non-empty one is :class:`BadAlgParams`.
+      an absent ``prf`` is HMAC-SHA-1, the DEFAULT; the iteration count is capped at ``MAX_PBKDF2_ITERATIONS``, and
+      the work ``iterations * ceil(length / digest size of the prf hash)`` at ``MAX_PBKDF2_WORK`` (25 000 000), both
+      refused with :class:`BadAlgParams` before anything is derived. PBKDF2 takes no ``info``: a non-empty one is
+      :class:`BadAlgParams`.
 
     :param kdf: The identifier of the key derivation function, with its parameters.
     :param secret: The input keying material or password.
@@ -286,8 +319,10 @@ def _mac_kmac(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool) 
         bits, custom = _HASH_REGISTRY[row.hash][1].digest_size * 8, b""
     else:
         bits, custom = int(params["kMACOutputLength"]), params["customizationString"].asOctets()
-    if bits < 8 or bits % 8:
-        raise BadAlgParams(f"KMAC kMACOutputLength must be a positive multiple of 8 bits, not {bits}.")
+    if bits % 8:
+        raise BadAlgParams(f"KMAC kMACOutputLength must be a multiple of 8 bits, not {bits}.")
+    if bits < MIN_KMAC_OUTPUT_BITS:
+        raise BadAlgParams(f"KMAC kMACOutputLength {bits} is below the limit of {MIN_KMAC_OUTPUT_BITS} bits.")
     return primitives.kmac(row.hash, key, data, mac_len=bits // 8, custom=custom)
 
 
@@ -314,6 +349,11 @@ def _mac_pbmac1(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool
     pbkdf2 = _read_pbkdf2(kdf)
     if pbkdf2.key_length is None:
         raise BadAlgParams("PBMAC1 needs the keyLength of PBKDF2-params: it is the length of the key of the MAC.")
+    if not MIN_PBMAC1_KEY_LENGTH <= pbkdf2.key_length <= MAX_PBMAC1_KEY_LENGTH:
+        raise BadAlgParams(
+            f"PBMAC1 keyLength {pbkdf2.key_length} is outside {MIN_PBMAC1_KEY_LENGTH} to {MAX_PBMAC1_KEY_LENGTH}."
+        )
+    _check_pbkdf2_work(pbkdf2.prf_hash, pbkdf2.iterations, pbkdf2.key_length)
     scheme = params["messageAuthScheme"]
     scheme_row = _row(MAC_BY_OID, scheme, "message authentication scheme of PBMAC1")
     if scheme_row.family != "hmac" or scheme_row.hash is None:
@@ -345,12 +385,15 @@ def compute_mac(mac: AlgId, key: bytes, data: bytes) -> bytes:
     * HMAC with SHA-1 (``hMAC-SHA1`` and ``id-hmacWithSHA1``), SHA-2 and SHA-3: the parameters are absent, or NULL for
       SHA-1 and SHA-2 (RFC 8018 Appendix B.1, RFC 9688 Section 4).
     * KMAC128 and KMAC256 (RFC 8702 Section 3.4): absent parameters mean 256 or 512 bits of output and no customization
-      string; ``KMACwithSHAKE128-params`` and ``KMACwithSHAKE256-params`` change both. ``pycryptodome`` takes a key of
-      at least 16 (KMAC128) or 32 (KMAC256) octets, a shorter one is a ``ValueError``.
+      string; ``KMACwithSHAKE128-params`` and ``KMACwithSHAKE256-params`` change both. An output length that is no
+      multiple of 8 bits, or below ``MIN_KMAC_OUTPUT_BITS`` (128), is :class:`BadAlgParams`; there is no upper cap.
+      ``pycryptodome`` takes a key of at least 16 (KMAC128) or 32 (KMAC256) octets, a shorter one is a ``ValueError``.
     * AES-GMAC (RFC 9044): ``key`` has the size of the OID, the parameters are required; the nonce has 8 to 128 octets
       and the MAC is the GCM tag cut to ``length`` octets of the parameters (DEFAULT 12).
     * PBMAC1 (RFC 8018 Section 7.1, RFC 9481 Section 6.1.2): ``key`` is the password; the key derivation function must
       be PBKDF2 with a ``keyLength``, the message authentication scheme an HMAC. The MAC key is the PBKDF2 output.
+      A ``keyLength`` outside ``MIN_PBMAC1_KEY_LENGTH`` to ``MAX_PBMAC1_KEY_LENGTH`` (16 to 4096 octets) or a PBKDF2
+      work above ``MAX_PBKDF2_WORK`` is :class:`BadAlgParams`, refused before PBKDF2 runs.
 
     SHA-1 is not refused here, a test suite has to produce it; :func:`verify_mac` refuses it unless it is allowed.
 
@@ -374,7 +417,8 @@ def verify_mac(mac: AlgId, key: bytes, data: bytes, expected: bytes, *, allow_sh
 
     :param expected: The MAC value that was received.
     :param allow_sha1: Accept a MAC over SHA-1.
-    :raises IntegrityError: If the MAC does not match. The message does not say how it differs.
+    :raises IntegrityError: If the MAC does not match, also if ``expected`` has another length than the MAC (a prefix
+        of a MAC does not verify). The message does not say how it differs.
     :raises BadAlg: As :func:`compute_mac`, and for SHA-1 without ``allow_sha1``.
     """
     if not hmac.compare_digest(_mac(mac, key, data, allow_sha1), expected):

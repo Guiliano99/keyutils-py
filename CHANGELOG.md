@@ -126,6 +126,15 @@ SPDX-License-Identifier: Apache-2.0 -->
   `aes-ICVlen`, DEFAULT 12; the tag is cut to that length, RFC 5084). The key must have the size of the OID. A CBC
   padding or length error and a GCM tag error are `IntegrityError` with one message, so that they are no padding oracle.
   `aad` or `tag` for AES-CBC, and a missing `tag` for AES-GCM, are a `TypeError`. Not yet exported from `keyutils_py`.
+- Limits on the parameters of a received MAC or PBKDF2, in `compute_mac`, `verify_mac` and `kdf_derive`. They are
+  fail-closed defaults, named as constants of `keyutils_py.mechanisms`, and each is refused with `BadAlgParams` before
+  anything is computed: a PBMAC1 `keyLength` below `MIN_PBMAC1_KEY_LENGTH` (16 octets, RFC 8018 Section 7.1: it is the
+  length of the MAC key) or above `MAX_PBMAC1_KEY_LENGTH` (4096); a KMAC `kMACOutputLength` below
+  `MIN_KMAC_OUTPUT_BITS` (128 bits; the multiple-of-8 rule stays, there is no upper cap, RFC 8702 Section 3.4); and a
+  PBKDF2 work `iterations * ceil(keyLength / digest size of the prf hash)` above `MAX_PBKDF2_WORK` (25 000 000), for
+  PBMAC1 and for `kdf_derive` (the `length` argument plays the role of `keyLength`), besides the existing cap of
+  `MAX_PBKDF2_ITERATIONS` on the iterations. `verify_mac` raises `IntegrityError` for a value of another length than
+  the MAC. `keyutils_py.primitives` has no such limit, so a test can still make a short key or tag.
 
 ## Changed
 
