@@ -18,6 +18,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, x25519
 from keyutils_py import (
+    check_consistency_sig_alg_id_and_key,
     generate_key,
     sign_data,
     sign_with_alg_id,
@@ -249,6 +250,29 @@ class TestMismatchMatrix(unittest.TestCase):
                     sign_with_alg_id(key, _alg_id(oid), DATA)
                 with self.assertRaises(BadSigAlgID):
                     verify_signature_with_alg_id(key.public_key(), _alg_id(oid), DATA, b"\x00")
+
+
+class TestConsistencyAgreesWithSigning(unittest.TestCase):
+    """``check_consistency_sig_alg_id_and_key`` accepts exactly the pairs that ``sign_with_alg_id`` accepts."""
+
+    def test_consistency_passes_iff_the_pair_belongs_together(self):
+        """GIVEN every key kind, private and public, and every row / WHEN checked / THEN BadSigAlgID iff foreign."""
+        checked = 0
+        for kind in _MISMATCH_KINDS:
+            key = _key(kind)
+            for name, row in ROWS.items():
+                if row["family"] == "dsa":
+                    continue
+                belongs = _row_belongs_to_key(kind, key, row)
+                for candidate in (key, key.public_key()):
+                    checked += 1
+                    with self.subTest(key=kind, oid=name, private=candidate is key):
+                        if belongs:
+                            check_consistency_sig_alg_id_and_key(_row_alg_id(row), candidate)
+                        else:
+                            with self.assertRaises(BadSigAlgID):
+                                check_consistency_sig_alg_id_and_key(_row_alg_id(row), candidate)
+        self.assertGreater(checked, 2000)
 
 
 class TestPreHashFollowsTheOid(unittest.TestCase):
