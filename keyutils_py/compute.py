@@ -25,7 +25,7 @@ Top-level entry points:
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Tuple, Union, get_args
+from typing import Any, Dict, Optional, Tuple, Union, get_args
 
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
@@ -33,7 +33,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa, x448, x25519
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc4055, rfc8017, rfc9480, rfc9481
+from pyasn1_alt_modules import rfc4055, rfc9480, rfc9481
 
 from keyutils_py.data_objects import FixedSHAKE128, FixedSHAKE256
 from keyutils_py.exceptions import (
@@ -57,8 +57,6 @@ from keyutils_py.keys.abstract_stateful_hash_sig import (
 from keyutils_py.keys.abstract_wrapper_keys import (
     AbstractHybridRawPrivateKey,
     AbstractHybridRawPublicKey,
-    HybridSigPrivateKey,
-    HybridSigPublicKey,
     KEMPrivateKey,
     KEMPublicKey,
 )
@@ -66,19 +64,12 @@ from keyutils_py.keys.composite_kem import CompositeKEMPrivateKey, CompositeKEMP
 from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigPublicKey
 from keyutils_py.keys.trad_kem_keys import DHKEMPublicKey, RSADecapKey, RSAEncapKey
 from keyutils_py.oids import (
-    COMPOSITE_SIG_OID_TO_NAME,
     CURVE_2_COFACTORS,
-    ECDSA_OID_2_NAME,
-    PQ_SIG_OID_2_NAME,
-    PQ_SIG_PRE_HASH_OID_2_NAME,
-    PQ_STATEFUL_HASH_SIG_OID_2_NAME,
-    RSA_OID_2_NAME,
-    RSASSA_PSS_OID_2_NAME,
     SIG_ALG_OID_2_PARAMETERS_SPEC,
-    TRAD_SIG_OID_2_NAME,
+    SigAlgInfo,
     get_hash_from_oid,
+    get_sig_alg_info,
     hash_name_to_instance,
-    may_return_oid_to_name,
 )
 from keyutils_py.types import DSAPrivateKey, DSAPublicKey, ECDHPrivateKey, ECDHPublicKey, SignKey, VerifyKey
 from keyutils_py.utils import (
@@ -217,41 +208,9 @@ def verify_rsassa_pss_from_alg_id(
     if oid != rfc9481.id_RSASSA_PSS:
         raise BadAlg(f"Unsupported RSASSA-PSS OID: {oid}.")
 
-    if not alg_id["parameters"].isValue:
-        raise BadSigAlgIDParams("RSASSA-PSS requires `parameters` to be present.")
-
-    if isinstance(alg_id["parameters"], rfc4055.RSASSA_PSS_params):
-        params = alg_id["parameters"]
-    else:
-        params, _ = try_decode_pyasn1(alg_id["parameters"], rfc4055.RSASSA_PSS_params())
-
-    salt_length = int(params["saltLength"])
-    hash_alg = get_hash_from_oid(params["hashAlgorithm"]["algorithm"])
-    if hash_alg is None:
-        raise BadSigAlgIDParams("Unrecognised hash algorithm in RSASSA-PSS parameters.")
-    hash_algorithm = hash_name_to_instance(hash_alg)
-
-    mgf_oid = params["maskGenAlgorithm"]["algorithm"]
-    if mgf_oid != rfc8017.id_mgf1:
-        raise BadSigAlgIDParams(f"`maskGenAlgorithm` must be MGF1, got {mgf_oid}.")
-
-    mgf_params_field = params["maskGenAlgorithm"]["parameters"]
-    if isinstance(mgf_params_field, rfc9480.AlgorithmIdentifier):
-        mgf = mgf_params_field
-    else:
-        mgf, _ = try_decode_pyasn1(mgf_params_field, rfc9480.AlgorithmIdentifier())
-
-    if mgf["algorithm"] != params["hashAlgorithm"]["algorithm"]:
-        raise BadSigAlgIDParams("MGF1 hash and `hashAlgorithm` must match.")
-
-    public_key.verify(
-        signature=signature,
-        data=data,
-        padding=padding.PSS(
-            mgf=padding.MGF1(algorithm=hash_algorithm),
-            salt_length=salt_length or hash_algorithm.digest_size,
-        ),
-        algorithm=hash_algorithm,
+    info = get_sig_alg_info(alg_id)
+    verify_signature(
+        public_key, signature, data, hash_alg=info.hash_alg, use_rsa_pss=True, salt_length=info.salt_length
     )
 
 
@@ -453,111 +412,98 @@ def verify_signature(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_sig_alg_name(alg_id: rfc9480.AlgorithmIdentifier) -> str:
-    """Return the registered name for ``alg_id`` (validates first)."""
-    _validate_sig_alg_id(alg_id)
-    oid = alg_id["algorithm"]
-    if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-        return PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid]
-    if oid in PQ_SIG_OID_2_NAME:
-        return PQ_SIG_OID_2_NAME[oid]
-    if oid in PQ_SIG_PRE_HASH_OID_2_NAME:
-        return PQ_SIG_PRE_HASH_OID_2_NAME[oid]
-    if oid in COMPOSITE_SIG_OID_TO_NAME:
-        return COMPOSITE_SIG_OID_TO_NAME[oid]
-    if oid in TRAD_SIG_OID_2_NAME:
-        return TRAD_SIG_OID_2_NAME[oid]
-    raise BadAlg(f"Unsupported signature AlgorithmIdentifier: {may_return_oid_to_name(oid)}.")
-
-
-def _check_eddsa_oid_matches_key(oid: univ.ObjectIdentifier, key: Any) -> None:
-    """Ensure an EdDSA ``alg_id`` OID matches the specific Ed key variant.
-
-    :raises BadSigAlgID: if the OID is not the exact Ed25519/Ed448 OID for ``key``.
-    """
-    is_ed25519 = isinstance(key, (ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey))
-    expected = rfc9481.id_Ed25519 if is_ed25519 else rfc9481.id_Ed448
-    if oid != expected:
-        raise BadSigAlgID(
-            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the {type(key).__name__} EdDSA key."
-        )
-
-
 # Runtime ``isinstance`` tuples derived from the SignKey / VerifyKey unions, so the
 # accepted key types stay a single source of truth (see ``keyutils_py.types``).
 _AllSigPriv = get_args(SignKey)
 _AllSigPub = get_args(VerifyKey)
 
 
-def sign_with_alg_id(key: SignKey, alg_id: rfc9480.AlgorithmIdentifier, data: bytes) -> bytes:
-    """Sign ``data`` using the algorithm described by ``alg_id``.
+def _check_key_matches(info: SigAlgInfo, key: Any) -> None:
+    """Raise :class:`BadSigAlgID` unless ``key`` may be used with the algorithm of the row ``info``.
 
-    The OID in ``alg_id`` is validated and matched against ``key``: each key
-    family (RSA-PKCS#1-v1.5, RSASSA-PSS, ECDSA, EdDSA, PQ, stateful-hash and
-    composite) only accepts an algorithm identifier from its own family, so a key
-    paired with a foreign OID is rejected rather than silently mis-signed. DSA
-    keys are rejected: DSA signing is only available through :func:`sign_data`.
+    This is the one function that knows what "matches" means, for every family and for a private as for a public
+    key: RSA and RSASSA-PSS rows take any RSA key (RFC 4055 Section 1.2: an ``rsaEncryption`` key may be used with
+    RSASSA-PSS), ECDSA, EdDSA, ML-DSA, SLH-DSA and Falcon rows the key of their name, the stateful rows the key with
+    the same OID, and a composite row the composite key whose OID for that padding is the row's OID.
+
+    :raises BadSigAlgID: If the key does not match the row.
+    :raises ValueError: If ``key`` is not a key class that ``get_key_name`` knows.
+    """
+    from keyutils_py.keyutils import get_key_name  # pylint: disable=import-outside-toplevel
+
+    if info.family == "composite":
+        matches = False
+        if isinstance(key, (CompositeSigPrivateKey, CompositeSigPublicKey)):
+            try:
+                matches = key.get_oid(use_pss=info.pss) == info.oid
+            except InvalidKeyCombination:
+                matches = False
+    elif info.family in ("hss", "xmss", "xmssmt"):
+        matches = isinstance(key, (PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey)) and (
+            key.get_oid() == info.oid
+        )
+    else:
+        matches = get_key_name(key) == info.key_name
+    if not matches:
+        raise BadSigAlgID(
+            "The key was not of the same type as the algorithm identifier implied.",
+            error_details=[f"OID {info.name} ({info.oid}); key {type(key).__name__}"],
+        )
+
+
+def _options_from_row(info: SigAlgInfo, hash_alg: Optional[str]) -> Dict[str, Any]:
+    """Return the keyword options of :func:`sign_data` / :func:`verify_signature` that the row ``info`` stands for.
+
+    :raises BadAlg: If the row names no hash for RSA PKCS#1 v1.5 (``rsaEncryption``) and ``hash_alg`` is ``None``.
+    :raises BadSigAlgID: If ``hash_alg`` is given and contradicts the hash that the row names.
+    """
+    if info.hash_alg is not None and hash_alg is not None and hash_alg != info.hash_alg:
+        raise BadSigAlgID(f"`hash_alg` {hash_alg!r} contradicts the hash {info.hash_alg!r} of {info.name}.")
+    if info.family == "composite":
+        return {"use_rsa_pss": info.pss}
+    if info.family == "rsa-pss":
+        return {"hash_alg": info.hash_alg, "use_rsa_pss": True, "salt_length": info.salt_length}
+    if info.family == "rsa":
+        if info.hash_alg is None and hash_alg is None:
+            raise BadAlg(f"{info.name} names no hash: pass `hash_alg`.")
+        return {"hash_alg": info.hash_alg or hash_alg}
+    if info.family in ("ecdsa", "dsa") or info.pre_hash:
+        return {"hash_alg": info.hash_alg}
+    return {}
+
+
+def sign_with_alg_id(
+    key: SignKey, alg_id: rfc9480.AlgorithmIdentifier, data: bytes, *, hash_alg: Optional[str] = None
+) -> bytes:
+    """Sign ``data`` with the algorithm that ``alg_id`` names.
+
+    Reads the table row of the OID (:func:`keyutils_py.oids.get_sig_alg_info`), checks that ``key`` belongs to it
+    and calls :func:`sign_data` with the options of the row. Every key family, the post-quantum, stateful-hash and
+    composite ones too, only accepts the identifiers of its own family and parameter set; a key paired with a
+    foreign OID is rejected rather than mis-signed. The OID decides how the signature is made: a ML-DSA or SLH-DSA
+    pre-hash OID signs in pre-hash mode with the hash it names, a composite ``-pss`` OID signs with RSASSA-PSS, and
+    an ``id-RSASSA-PSS`` identifier signs with the hash and the salt length of its parameters (a salt length of 0
+    is honoured; omitted fields have the DEFAULT values of RFC 4055 Section 3.1). Absent and NULL parameters of the
+    PKCS#1 v1.5 identifiers are both accepted (RFC 4055 Section 5, RFC 5754 Section 3.2).
 
     :param key: The signature private key. Must match the ``alg_id`` family.
-    :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm
-        (and, for RSASSA-PSS, carrying its parameters).
+    :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm.
     :param data: The message bytes to sign.
-    :raises BadAlg: If the OID is not a supported signature OID, or ``key`` is a
-        DSA key (DSA is not supported here).
-    :raises BadSigAlgID: If ``key`` does not match the algorithm identifier
-        (including a RSASSA-PSS ``alg_id`` paired with a non-RSA key).
+    :param hash_alg: The hash for ``rsaEncryption``, which names none (RFC 3370 Section 3.2). For any other
+        identifier that names a hash, a different ``hash_alg`` is an error; it is ignored by the identifiers that
+        name none (EdDSA, pure ML-DSA, ...).
+    :raises BadAlg: If the OID is not a supported signature OID, ``key`` is not a signature key, ``key`` is a DSA
+        key (DSA is not supported here), or ``rsaEncryption`` is used without ``hash_alg``.
+    :raises BadSigAlgID: If ``key`` does not match the algorithm identifier, or ``hash_alg`` contradicts it.
     :raises BadSigAlgIDParams: If the ``alg_id`` parameters are invalid for the OID.
     """
-    name = _resolve_sig_alg_name(alg_id)
+    info = get_sig_alg_info(alg_id)
     if not isinstance(key, _AllSigPriv):
         raise BadAlg(f"Key is not a signature private key (got {type(key).__name__}).")
     if isinstance(key, DSAPrivateKey):
         raise BadAlg("DSA algorithm is not supported.")
-
-    oid = alg_id["algorithm"]
-    if oid in RSASSA_PSS_OID_2_NAME:
-        if not isinstance(key, rsa.RSAPrivateKey):
-            raise BadSigAlgID(f"RSASSA-PSS alg_id requires an RSA private key (got {type(key).__name__}).")
-        if oid == rfc9481.id_RSASSA_PSS_SHAKE128:
-            return sign_data_rsa_pss(key, data, hash_alg="shake128")
-        if oid == rfc9481.id_RSASSA_PSS_SHAKE256:
-            return sign_data_rsa_pss(key, data, hash_alg="shake256")
-        params_field = alg_id["parameters"]
-        if isinstance(params_field, rfc4055.RSASSA_PSS_params):
-            params = params_field
-        else:
-            params, _ = try_decode_pyasn1(params_field, rfc4055.RSASSA_PSS_params())
-        hash_alg = get_hash_from_oid(params["hashAlgorithm"]["algorithm"]) or "sha256"
-        salt_length = int(params["saltLength"]) if params_field.isValue else None
-        return sign_data_rsa_pss(key, data, hash_alg=hash_alg, salt_length=salt_length)
-
-    if isinstance(key, HybridSigPrivateKey):
-        return key.sign(data)
-    if isinstance(key, rsa.RSAPrivateKey):
-        if oid not in RSA_OID_2_NAME:
-            raise BadSigAlgID(
-                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an RSA PKCS#1 v1.5 "
-                "signature OID, but the key is an RSA private key."
-            )
-        hash_alg = RSA_OID_2_NAME[oid].split("-", 1)[1]
-        return key.sign(
-            data=data,
-            padding=padding.PKCS1v15(),
-            algorithm=hash_name_to_instance(hash_alg),
-        )
-    if isinstance(key, ec.EllipticCurvePrivateKey):
-        if oid not in ECDSA_OID_2_NAME:
-            raise BadSigAlgID(
-                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an ECDSA "
-                "signature OID, but the key is an EC private key."
-            )
-        hash_alg = ECDSA_OID_2_NAME[oid].split("-", 1)[1]
-        return key.sign(data, ec.ECDSA(hash_name_to_instance(hash_alg)))
-    if isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
-        _check_eddsa_oid_matches_key(oid, key)
-        return key.sign(data)
-    require_oqs_if_needed(name)
-    return key.sign(data)
+    _check_key_matches(info, key)
+    return sign_data(data, key, **_options_from_row(info, hash_alg))
 
 
 def verify_signature_with_alg_id(
@@ -565,75 +511,33 @@ def verify_signature_with_alg_id(
     alg_id: rfc9480.AlgorithmIdentifier,
     data: bytes,
     signature: bytes,
+    *,
+    hash_alg: Optional[str] = None,
 ) -> None:
-    """Verify ``signature`` over ``data`` using the algorithm described by ``alg_id``.
+    """Verify ``signature`` over ``data`` with the algorithm that ``alg_id`` names.
 
-    The verification counterpart of :func:`sign_with_alg_id`: the OID in
-    ``alg_id`` is validated and must belong to the same family as ``public_key``.
-    RSA-SHA1 (``sha1WithRSAEncryption``) and DSA keys are rejected.
+    The verification counterpart of :func:`sign_with_alg_id`, with the same rules for the key, the OID and the
+    parameters. RSA-SHA1 (``sha1WithRSAEncryption``) is verified: whether to refuse it is the policy of the caller,
+    who can read the hash from :func:`keyutils_py.oids.get_sig_alg_info`.
 
     :param public_key: The signature public key. Must match the ``alg_id`` family.
     :param alg_id: The :class:`AlgorithmIdentifier` selecting the algorithm.
     :param data: The message bytes the signature is over.
     :param signature: The signature bytes to check.
-    :raises BadAlg: If the OID is not a supported signature OID, the OID is
-        RSA-SHA1, or ``public_key`` is a DSA key (DSA is not supported here).
-    :raises BadSigAlgID: If ``public_key`` does not match the algorithm identifier
-        (including a RSASSA-PSS ``alg_id`` paired with a non-RSA key).
+    :param hash_alg: The hash for ``rsaEncryption``; see :func:`sign_with_alg_id`.
+    :raises BadAlg: If the OID is not a supported signature OID, ``public_key`` is not a signature key, ``public_key``
+        is a DSA key (DSA is not supported here), or ``rsaEncryption`` is used without ``hash_alg``.
+    :raises BadSigAlgID: If ``public_key`` does not match the algorithm identifier, or ``hash_alg`` contradicts it.
     :raises BadSigAlgIDParams: If the ``alg_id`` parameters are invalid for the OID.
     :raises cryptography.exceptions.InvalidSignature: If the signature does not verify.
     """
-    name = _resolve_sig_alg_name(alg_id)
+    info = get_sig_alg_info(alg_id)
     if not isinstance(public_key, _AllSigPub):
         raise BadAlg(f"Public key is not a signature public key (got {type(public_key).__name__}).")
     if isinstance(public_key, DSAPublicKey):
         raise BadAlg("DSA algorithm is not supported.")
-
-    oid = alg_id["algorithm"]
-    if oid in RSASSA_PSS_OID_2_NAME:
-        if not isinstance(public_key, rsa.RSAPublicKey):
-            raise BadSigAlgID(f"RSASSA-PSS alg_id requires an RSA public key (got {type(public_key).__name__}).")
-        verify_rsassa_pss_from_alg_id(public_key, data, signature, alg_id)
-        return
-
-    if isinstance(public_key, HybridSigPublicKey):
-        public_key.verify(signature=signature, data=data)
-        return
-    if isinstance(public_key, rsa.RSAPublicKey):
-        if oid not in RSA_OID_2_NAME:
-            raise BadSigAlgID(
-                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an RSA PKCS#1 v1.5 "
-                "signature OID, but the key is an RSA public key."
-            )
-        if oid == rfc8017.sha1WithRSAEncryption:
-            raise BadAlg("RSA-SHA1 signatures are not accepted for verification.")
-        hash_alg = RSA_OID_2_NAME[oid].split("-", 1)[1]
-        public_key.verify(
-            signature=signature,
-            data=data,
-            padding=padding.PKCS1v15(),
-            algorithm=hash_name_to_instance(hash_alg),
-        )
-        return
-    if isinstance(public_key, ec.EllipticCurvePublicKey):
-        if oid not in ECDSA_OID_2_NAME:
-            raise BadSigAlgID(
-                f"AlgorithmIdentifier {may_return_oid_to_name(oid)} is not an ECDSA "
-                "signature OID, but the key is an EC public key."
-            )
-        hash_alg = ECDSA_OID_2_NAME[oid].split("-", 1)[1]
-        public_key.verify(signature, data, ec.ECDSA(hash_name_to_instance(hash_alg)))
-        return
-    if isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
-        _check_eddsa_oid_matches_key(oid, public_key)
-        public_key.verify(signature, data)
-        return
-    require_oqs_if_needed(name)
-    if isinstance(public_key, PQHashStatefulSigPublicKey):
-        public_key.verify(data=data, signature=signature)
-        return
-    # Only PQSignaturePublicKey remains (DSA rejected above; RSA/EC/Ed/hybrid handled).
-    public_key.verify(signature=signature, data=data)
+    _check_key_matches(info, public_key)
+    verify_signature(public_key, signature, data, **_options_from_row(info, hash_alg))
 
 
 # ---------------------------------------------------------------------------
