@@ -64,6 +64,19 @@ _SIGNATURES = {
     "use_rsa_pss: 'bool' = False) -> 'rfc5280.AlgorithmIdentifier'",
     "prepare_hash_alg_id": "(hash_alg: 'str', fill_random_params: 'bool' = False, *, "
     "with_null: 'Optional[bool]' = None) -> 'rfc5280.AlgorithmIdentifier'",
+    "kdf_derive": "(kdf: 'AlgId', secret: 'bytes', length: 'int', info: 'bytes' = b'') -> 'bytes'",
+    "compute_mac": "(mac: 'AlgId', key: 'bytes', data: 'bytes') -> 'bytes'",
+    "verify_mac": "(mac: 'AlgId', key: 'bytes', data: 'bytes', expected: 'bytes', *, allow_sha1: 'bool' = False) "
+    "-> 'None'",
+    "mac_key_length": "(mac: 'AlgId') -> 'Optional[int]'",
+    "wrap_cek": "(wrap: 'AlgId', kek: 'bytes', cek: 'bytes') -> 'bytes'",
+    "unwrap_cek": "(wrap: 'AlgId', kek: 'bytes', wrapped: 'bytes') -> 'bytes'",
+    "wrap_key_length": "(wrap: 'AlgId') -> 'int'",
+    "encrypt_content": "(enc: 'AlgId', cek: 'bytes', plaintext: 'bytes', *, aad: 'Optional[bytes]' = None) "
+    "-> 'Encrypted'",
+    "decrypt_content": "(enc: 'AlgId', cek: 'bytes', ciphertext: 'bytes', *, tag: 'Optional[bytes]' = None, "
+    "aad: 'Optional[bytes]' = None) -> 'bytes'",
+    "make_alg_id": "(kind: 'AlgKind', family: 'str', **params: 'Any') -> 'AlgId'",
 }
 
 
@@ -116,6 +129,42 @@ class TestPublicApi(unittest.TestCase):
                     self.assertIn(name, keyutils_py.__all__)
                     self.assertIs(getattr(keyutils_py, name), getattr(module, name))
 
+    def test_the_mechanisms_and_their_types_are_exported(self):
+        """GIVEN the names of keyutils_py.mechanisms / WHEN looked up / THEN they are top-level, the same objects."""
+        from keyutils_py import exceptions, mechanisms
+
+        names = (
+            "AlgKind",
+            "Encrypted",
+            "compute_mac",
+            "decrypt_content",
+            "encrypt_content",
+            "kdf_derive",
+            "mac_key_length",
+            "make_alg_id",
+            "unwrap_cek",
+            "verify_mac",
+            "wrap_cek",
+            "wrap_key_length",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                self.assertIn(name, keyutils_py.__all__)
+                self.assertIs(getattr(keyutils_py, name), getattr(mechanisms, name))
+        for name in ("BadAlgParams", "IntegrityError"):
+            self.assertIs(getattr(keyutils_py, name), getattr(exceptions, name))
+        self.assertIs(keyutils_py.AlgInfo, algorithms.AlgInfo)
+
+    def test_the_lower_layer_is_not_public(self):
+        """GIVEN keyutils_py.primitives / WHEN __all__ is read / THEN neither it nor its functions are listed."""
+        from keyutils_py import primitives
+
+        own = {
+            name for name, value in vars(primitives).items() if getattr(value, "__module__", "") == primitives.__name__
+        }
+        self.assertEqual(own & set(keyutils_py.__all__), set())
+        self.assertNotIn("primitives", keyutils_py.__all__)
+
     def test_signatures_of_the_signature_entry_points(self):
         """GIVEN the entry points with keyword-only options / WHEN inspected / THEN the signatures are pinned."""
         for name, expected in _SIGNATURES.items():
@@ -135,6 +184,14 @@ class TestListAlgorithms(unittest.TestCase):
         self.assertTrue(all(isinstance(row, keyutils_py.SigAlgInfo) for row in rows))
         oids = [row.oid.asTuple() for row in rows]
         self.assertEqual(oids, sorted(oids))
+
+    def test_every_other_kind_lists_its_rows(self):
+        """GIVEN the kinds kdf, mac, wrap and content / WHEN listed / THEN 10, 16, 6 and 6 rows of AlgInfo."""
+        for kind, count in (("kdf", 10), ("mac", 16), ("wrap", 6), ("content", 6)):
+            with self.subTest(kind=kind):
+                rows = keyutils_py.list_algorithms(kind)
+                self.assertEqual(len(rows), count)
+                self.assertTrue(all(isinstance(row, keyutils_py.AlgInfo) for row in rows))
 
     def test_unknown_kind_names_the_known_kinds(self):
         """GIVEN an unknown kind / WHEN listed / THEN ValueError that lists the known kinds."""

@@ -61,7 +61,7 @@ class KdfRow:
 
     def info(self) -> AlgInfo:
         """Return the listing row."""
-        return AlgInfo("kdf", self.family, {} if self.hash is None else {"hash": self.hash}, self.oid)
+        return AlgInfo("kdf", self.family, MappingProxyType({} if self.hash is None else {"hash": self.hash}), self.oid)
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ class MacRow:
             params["hash"] = self.hash
         if self.bits is not None:
             params["bits"] = self.bits
-        return AlgInfo("mac", self.family, params, self.oid)
+        return AlgInfo("mac", self.family, MappingProxyType(params), self.oid)
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ class WrapRow:
 
     def info(self) -> AlgInfo:
         """Return the listing row."""
-        return AlgInfo("wrap", "aes", {"bits": self.kek_len * 8, "mode": self.mode}, self.oid)
+        return AlgInfo("wrap", "aes", MappingProxyType({"bits": self.kek_len * 8, "mode": self.mode}), self.oid)
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,7 @@ class ContentRow:
 
     def info(self) -> AlgInfo:
         """Return the listing row."""
-        return AlgInfo("content", f"aes-{self.mode}", {"bits": self.key_len * 8}, self.oid)
+        return AlgInfo("content", f"aes-{self.mode}", MappingProxyType({"bits": self.key_len * 8}), self.oid)
 
 
 @dataclass(frozen=True)

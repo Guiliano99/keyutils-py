@@ -102,8 +102,7 @@ SPDX-License-Identifier: Apache-2.0 -->
   specification, so it works for an identifier after a DER round trip; an absent `prf` is HMAC-SHA-1 (RFC 8018 Appendix
   A.2 DEFAULT); `keyLength`, if present, must equal `length`; a salt from `otherSource` is `BadAlg`; the iteration
   count is capped at `MAX_PBKDF2_ITERATIONS`; PBKDF2 takes no `info`. An OID in no table is `BadAlg`, parameters that
-  are absent, present wrongly or inconsistent are `BadAlgParams`, undecodable ones `BadAsn1Data`. Not yet exported from
-  `keyutils_py`.
+  are absent, present wrongly or inconsistent are `BadAlgParams`, undecodable ones `BadAsn1Data`.
 - `keyutils_py.mechanisms.compute_mac(mac, key, data)`, `verify_mac(mac, key, data, expected, *, allow_sha1=False)`
   and `mac_key_length(mac)` for the MAC an `AlgorithmIdentifier` names: HMAC with SHA-1 (both OIDs), SHA-2 and SHA-3
   (parameters absent, NULL also for SHA-1 and SHA-2), KMAC128/256 (absent parameters mean 256 or 512 bits and no
@@ -113,7 +112,7 @@ SPDX-License-Identifier: Apache-2.0 -->
   `BadAlgParams`, RFC 8018 Section 7.1). `verify_mac` compares with `hmac.compare_digest`, raises `IntegrityError` with
   one message whatever differs, and refuses SHA-1 with `BadAlg` (HMAC, or PBMAC1 over SHA-1 as pseudorandom function or
   HMAC) unless the caller passes `allow_sha1=True`; `compute_mac` does not refuse it. `mac_key_length` is 16, 24 or 32
-  for AES-GMAC and `None` otherwise. Not yet exported from `keyutils_py`.
+  for AES-GMAC and `None` otherwise.
 - `keyutils_py.mechanisms.wrap_cek(wrap, kek, cek)`, `unwrap_cek(wrap, kek, wrapped)` and `wrap_key_length(wrap)` for
   AES key wrap (RFC 3394, `id-aes128/192/256-wrap`) and AES key wrap with padding (RFC 5649,
   `id-aes128/192/256-wrap-pad`). The KEK must have the size that the OID names (`BadAlgParams` otherwise, also on
@@ -125,7 +124,7 @@ SPDX-License-Identifier: Apache-2.0 -->
   are the 16 octet IV, RFC 3565, RFC 9481 Section 5.1) and AES-GCM (`GCMParameters`: a nonce of 8 to 128 octets and
   `aes-ICVlen`, DEFAULT 12; the tag is cut to that length, RFC 5084). The key must have the size of the OID. A CBC
   padding or length error and a GCM tag error are `IntegrityError` with one message, so that they are no padding oracle.
-  `aad` or `tag` for AES-CBC, and a missing `tag` for AES-GCM, are a `TypeError`. Not yet exported from `keyutils_py`.
+  `aad` or `tag` for AES-CBC, and a missing `tag` for AES-GCM, are a `TypeError`.
 - Limits on the parameters of a received MAC or PBKDF2, in `compute_mac`, `verify_mac` and `kdf_derive`. They are
   fail-closed defaults, named as constants of `keyutils_py.mechanisms`, and each is refused with `BadAlgParams` before
   anything is computed: a PBMAC1 `keyLength` below `MIN_PBMAC1_KEY_LENGTH` (16 octets, RFC 8018 Section 7.1: it is the
@@ -135,6 +134,19 @@ SPDX-License-Identifier: Apache-2.0 -->
   PBMAC1 and for `kdf_derive` (the `length` argument plays the role of `keyLength`), besides the existing cap of
   `MAX_PBKDF2_ITERATIONS` on the iterations. `verify_mac` raises `IntegrityError` for a value of another length than
   the MAC. `keyutils_py.primitives` has no such limit, so a test can still make a short key or tag.
+- `make_alg_id(kind, family, **params)` builds the `AlgorithmIdentifier` of a key derivation function (`hkdf`, `kdf2`,
+  `kdf3`, `pbkdf2`), MAC (`hmac`, `kmac`, `gmac`, `pbmac1`), AES key wrap (`aes`, mode `kw` or `kwp`) or AES content
+  encryption (`aes-cbc`, `aes-gcm`), one builder per family with the parameters as the RFCs write them (the DER of the
+  identifiers of RFC 9690 Appendix D.2 is reproduced). An unknown keyword or a missing one is a `TypeError`, an unknown
+  kind, family, hash, size or mode `BadAlg`; the kinds `kari` and `key_transport` have no builder yet and are `BadAlg`.
+  A builder writes what it is asked for and checks no size, so a test can build what a receiver refuses.
+  `list_algorithms` lists the kinds `kdf` (10 rows), `mac` (16), `wrap` (6) and `content` (6) as
+  `AlgInfo(kind, family, params, oid)`, sorted by OID, `params` being keywords that `make_alg_id` takes.
+- Exported from `keyutils_py`: `make_alg_id`, `kdf_derive`, `compute_mac`, `verify_mac`, `mac_key_length`, `wrap_cek`,
+  `unwrap_cek`, `wrap_key_length`, `encrypt_content`, `decrypt_content`, `Encrypted`, `AlgInfo`, `AlgKind`,
+  `BadAlgParams` and `IntegrityError`. They are in `keyutils_py.mechanisms` (the functions and types),
+  `keyutils_py.algorithms` and `keyutils_py.exceptions`. `tests/golden/public_api.tsv` and `tests/test_public_api.py`
+  pin the names and the signatures. `keyutils_py.primitives` is not exported.
 
 ## Changed
 
