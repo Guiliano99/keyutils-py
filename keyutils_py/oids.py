@@ -20,7 +20,22 @@ from typing import Dict, Optional, Tuple, Union
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc4055, rfc5480, rfc5990, rfc8017, rfc9480, rfc9481, rfc9688, rfc9708
+from pyasn1_alt_modules import (
+    rfc3370,
+    rfc3565,
+    rfc4055,
+    rfc5084,
+    rfc5280,
+    rfc5480,
+    rfc5990,
+    rfc8017,
+    rfc8018,
+    rfc8619,
+    rfc9480,
+    rfc9481,
+    rfc9688,
+    rfc9708,
+)
 
 from keyutils_py.enums import SigAlgParametersSpec
 
@@ -267,21 +282,15 @@ def compute_hash(alg_name: str, data: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-# Populated at the bottom of this module once all hybrid OID maps are defined.
-_HYBRID_OID_2_NAME: Dict[univ.ObjectIdentifier, str] = {}
+# Every OID the tables of this module name, filled at the bottom once all of them are defined.
+ALG_OID_2_NAME: Dict[univ.ObjectIdentifier, str] = {}
 
 
 def may_return_oid_to_name(oid: Union[str, univ.ObjectIdentifier]) -> str:
     """Return the registered name for ``oid`` or its dotted string form."""
     if isinstance(oid, str):
         return oid
-    name = PQ_OID_2_NAME.get(oid)
-    if name is not None:
-        return name
-    name = _HYBRID_OID_2_NAME.get(oid)
-    if name is not None:
-        return name
-    return str(oid)
+    return ALG_OID_2_NAME.get(oid, str(oid))
 
 
 def get_hash_from_oid(oid: univ.ObjectIdentifier) -> Optional[str]:
@@ -444,12 +453,6 @@ KEM_OID_2_NAME.update({univ.ObjectIdentifier(XWING_OID_STR): "xwing"})
 KEM_OID_2_NAME.update(COMPOSITE_KEM_OID_2_NAME)
 KEM_OID_2_NAME.update({rfc5990.id_kem_rsa: "rsa-kem"})
 
-# Populate the lookup table used by may_return_oid_to_name (defined earlier).
-_HYBRID_OID_2_NAME.update(COMPOSITE_SIG_OID_TO_NAME)
-_HYBRID_OID_2_NAME.update(CHEMPAT_OID_2_NAME)
-_HYBRID_OID_2_NAME.update(COMPOSITE_KEM_OID_2_NAME)
-_HYBRID_OID_2_NAME.update({univ.ObjectIdentifier(XWING_OID_STR): "xwing"})
-
 
 # ---------------------------------------------------------------------------
 # Traditional signature OIDs (RSA, RSASSA-PSS, ECDSA, EdDSA)
@@ -522,6 +525,145 @@ TRAD_SIG_OID_2_NAME.update(ECDSA_OID_2_NAME)
 TRAD_SIG_OID_2_NAME.update(DSA_OID_2_NAME)
 
 TRAD_SIG_NAME_2_OID = {v: k for k, v in TRAD_SIG_OID_2_NAME.items()}
+
+
+# ---------------------------------------------------------------------------
+# Hash, MAC, KDF, key wrap and content encryption OIDs.
+# Same names and same values as cmp-test-suite/resources/oidutils.py, so that
+# the test suite can read them from here; tests/golden/oid_tables.tsv pins them.
+# ---------------------------------------------------------------------------
+
+# The id-alg arc of the S/MIME algorithms (RFC 9688, RFC 9690).
+id_alg = univ.ObjectIdentifier("1.2.840.113549.1.9.16.3")
+
+# Hash OIDs by name, read from the one hash registry.
+SHA2_OID_2_NAME = {
+    oid: name for name, (oid, _) in _HASH_REGISTRY.items() if name in ("sha224", "sha256", "sha384", "sha512")
+}
+SHA2_NAME_2_OID = {v: k for k, v in SHA2_OID_2_NAME.items()}
+SHA_OID_2_NAME = {_HASH_REGISTRY["sha1"][0]: "sha1"}
+SHA_OID_2_NAME.update(SHA2_OID_2_NAME)
+
+# HMAC (RFC 9481, RFC 9688, RFC 3370).
+HMAC_SHA_OID_2_NAME = {
+    rfc9481.id_hmacWithSHA224: "hmac-sha224",
+    rfc9481.id_hmacWithSHA256: "hmac-sha256",
+    rfc9481.id_hmacWithSHA384: "hmac-sha384",
+    rfc9481.id_hmacWithSHA512: "hmac-sha512",
+}
+HMAC_SHA3_OID_2_NAME = {
+    rfc9688.id_hmacWithSHA3_224: "hmac-sha3_224",
+    rfc9688.id_hmacWithSHA3_256: "hmac-sha3_256",
+    rfc9688.id_hmacWithSHA3_384: "hmac-sha3_384",
+    rfc9688.id_hmacWithSHA3_512: "hmac-sha3_512",
+}
+HMAC_OID_2_NAME = {rfc3370.hMAC_SHA1: "hmac-sha1"}
+HMAC_OID_2_NAME.update(HMAC_SHA_OID_2_NAME)
+HMAC_OID_2_NAME.update(HMAC_SHA3_OID_2_NAME)
+
+# KMAC and AES-GMAC (RFC 9481). "aes-gmac" and "aes_gmac" are aliases of the 256 bit one.
+KMAC_OID_2_NAME = {rfc9481.id_KMACWithSHAKE128: "kmac-shake128", rfc9481.id_KMACWithSHAKE256: "kmac-shake256"}
+AES_GMAC_NAME_2_OID = {
+    "aes128_gmac": rfc9481.id_aes128_GMAC,
+    "aes192_gmac": rfc9481.id_aes192_GMAC,
+    "aes256_gmac": rfc9481.id_aes256_GMAC,
+    "aes-gmac": rfc9481.id_aes256_GMAC,
+    "aes_gmac": rfc9481.id_aes256_GMAC,
+}
+AES_GMAC_OID_2_NAME: Dict[univ.ObjectIdentifier, str] = {
+    rfc9481.id_aes128_GMAC: "aes128_gmac",
+    rfc9481.id_aes192_GMAC: "aes192_gmac",
+    rfc9481.id_aes256_GMAC: "aes256_gmac",
+}
+
+# HKDF with the SHA-3 variants of RFC 9688 Section 5.
+HKDF_NAME_2_OID = {
+    "hkdf-sha256": rfc8619.id_alg_hkdf_with_sha256,
+    "hkdf-sha384": rfc8619.id_alg_hkdf_with_sha384,
+    "hkdf-sha512": rfc8619.id_alg_hkdf_with_sha512,
+    "hkdf-sha3-224": id_alg + (32,),
+    "hkdf-sha3-256": id_alg + (33,),
+    "hkdf-sha3-384": id_alg + (34,),
+    "hkdf-sha3-512": id_alg + (35,),
+}
+HKDF_OID_2_NAME = {v: k for k, v in HKDF_NAME_2_OID.items()}
+
+# AES content encryption (RFC 9481 Section 5, RFC 5084).
+AES_CBC_NAME_2_OID = {
+    "aes128_cbc": rfc9481.id_aes128_CBC,
+    "aes192_cbc": rfc9481.id_aes192_CBC,
+    "aes256_cbc": rfc9481.id_aes256_CBC,
+}
+AES_CBC_OID_2_NAME = {v: k for k, v in AES_CBC_NAME_2_OID.items()}
+AES_GCM_NAME_2_OID = {
+    "aes128_gcm": rfc5084.id_aes128_GCM,
+    "aes192_gcm": rfc5084.id_aes192_GCM,
+    "aes256_gcm": rfc5084.id_aes256_GCM,
+}
+AES_GCM_OID_2_NAME = {v: k for k, v in AES_GCM_NAME_2_OID.items()}
+SYMMETRIC_ENCR_ALG_OID_2_NAME = dict(AES_CBC_OID_2_NAME)
+SYMMETRIC_ENCR_ALG_NAME_2_OID = {v: k for k, v in SYMMETRIC_ENCR_ALG_OID_2_NAME.items()}
+
+# AES key wrap (RFC 3565, RFC 9481 Section 4.3).
+KEY_WRAP_NAME_2_OID = {
+    "aes128_wrap": rfc3565.id_aes128_wrap,
+    "aes192_wrap": rfc3565.id_aes192_wrap,
+    "aes256_wrap": rfc3565.id_aes256_wrap,
+}
+KEY_WRAP_OID_2_NAME = {v: k for k, v in KEY_WRAP_NAME_2_OID.items()}
+KM_KW_ALG = {
+    rfc9481.id_aes128_wrap: "aes128_wrap",
+    rfc9481.id_aes192_wrap: "aes192_wrap",
+    rfc9481.id_aes256_wrap: "aes256_wrap",
+}
+
+# CMP message protection: the MAC algorithms (RFC 9481, RFC 9810) and the signature algorithms next to them.
+id_KemBasedMac = univ.ObjectIdentifier("1.2.840.113533.7.66.16")
+id_it_KemCiphertextInfo = rfc9480.id_it + (9999,)
+
+LWCMP_MAC_OID_2_NAME = {rfc9480.id_PasswordBasedMac: "password_based_mac", rfc8018.id_PBMAC1: "pbmac1"}
+SYMMETRIC_PROT_ALGO: Dict[univ.ObjectIdentifier, str] = {
+    rfc9480.id_DHBasedMac: "dh_based_mac",
+    id_KemBasedMac: "kem_based_mac",
+}
+SYMMETRIC_PROT_ALGO.update(LWCMP_MAC_OID_2_NAME)
+SYMMETRIC_PROT_ALGO.update(HMAC_OID_2_NAME)
+SYMMETRIC_PROT_ALGO.update(AES_GMAC_OID_2_NAME)
+SYMMETRIC_PROT_ALGO.update(KMAC_OID_2_NAME)
+
+MSG_SIG_ALG = {rfc9481.id_Ed25519: "ed25519", rfc9481.id_Ed448: "ed448"}
+MSG_SIG_ALG.update(RSA_SHA2_OID_2_NAME)
+MSG_SIG_ALG.update(RSASSA_PSS_OID_2_NAME)
+MSG_SIG_ALG.update(ECDSA_SHA_OID_2_NAME)
+
+SUPPORTED_MAC_OID_2_NAME: Dict[univ.ObjectIdentifier, str] = {}
+SUPPORTED_MAC_OID_2_NAME.update(MSG_SIG_ALG)
+SUPPORTED_MAC_OID_2_NAME.update(SYMMETRIC_PROT_ALGO)
+
+# Extension OIDs of the hybrid certificate drafts (alternative key and signature).
+id_ce_subjectAltPublicKeyInfo = rfc5280.id_ce + (72,)
+id_ce_altSignatureAlgorithm = rfc5280.id_ce + (73,)
+id_ce_altSignatureValue = rfc5280.id_ce + (74,)
+
+# ---------------------------------------------------------------------------
+# One OID -> name table for ``may_return_oid_to_name``: every OID the tables above name. It is built from
+# tables that map OID to name only, so it has no entry with a name as key and an OID as value (the table
+# ALL_KNOWN_OIDS_2_NAME of cmp-test-suite has 24 of them).
+# ---------------------------------------------------------------------------
+
+for _table in (
+    PQ_OID_2_NAME,
+    KEM_OID_2_NAME,
+    COMPOSITE_SIG_OID_TO_NAME,
+    TRAD_SIG_OID_2_NAME,
+    _HASH_OID_2_NAME,
+    SUPPORTED_MAC_OID_2_NAME,
+    AES_CBC_OID_2_NAME,
+    AES_GCM_OID_2_NAME,
+    KEY_WRAP_OID_2_NAME,
+    HKDF_OID_2_NAME,
+):
+    ALG_OID_2_NAME.update(_table)
 
 
 # ---------------------------------------------------------------------------
