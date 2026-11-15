@@ -131,8 +131,8 @@ class TestSignVerify(unittest.TestCase):
 
     def test_compute_dispatch(self):
         """GIVEN sign_data / verify_signature / WHEN given the wrapper / THEN both dispatch to it."""
-        sig = sign_data(DATA, self.key)
-        verify_signature(self.key.public_key(), sig, DATA)
+        sig = sign_data(DATA, self.key, hash_alg="sha256")
+        verify_signature(self.key.public_key(), sig, DATA, hash_alg="sha256")
         with self.assertRaises(InvalidSignature):
             verify_signature(self.key.public_key(), sig, DATA, hash_alg="sha1")  # wrong hash
 
