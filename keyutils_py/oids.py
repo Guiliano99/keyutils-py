@@ -15,7 +15,7 @@ Trimmed copy of ``cmp-test-suite/resources/oidutils.py`` and
 catalogue (hybrid, composite, chempat, traditional) lives in the source repo.
 """
 
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -222,47 +222,42 @@ KEM_OID_2_NAME = {y: x for x, y in PQ_KEM_NAME_2_OID.items()}
 
 
 # ---------------------------------------------------------------------------
-# Hash helpers (subset of resources/oid_mapping.py used by sig_keys.py)
+# Hash registry: the one table that names, identifies and builds every hash.
 # ---------------------------------------------------------------------------
 
-_HASH_NAME_2_OID = {
-    "sha1": univ.ObjectIdentifier("1.3.14.3.2.26"),
-    "sha224": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.4"),
-    "sha256": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.1"),
-    "sha384": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.2"),
-    "sha512": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.3"),
-    "shake128": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.11"),
-    "shake256": univ.ObjectIdentifier("2.16.840.1.101.3.4.2.12"),
+# name -> (OID, hash algorithm). The SHA-3 OIDs are the ones of RFC 9688 (``hashAlgs`` + 7 to 10), SHAKE is RFC 8702;
+# SHAKE128 and SHAKE256 give 32 and 64 bytes, as RFC 9814 Section 4 uses them (256 and 512 bit output).
+_HASH_REGISTRY: Dict[str, Tuple[univ.ObjectIdentifier, hashes.HashAlgorithm]] = {
+    "sha1": (univ.ObjectIdentifier("1.3.14.3.2.26"), hashes.SHA1()),
+    "sha224": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.4"), hashes.SHA224()),
+    "sha256": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.1"), hashes.SHA256()),
+    "sha384": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.2"), hashes.SHA384()),
+    "sha512": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.3"), hashes.SHA512()),
+    "sha3_224": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.7"), hashes.SHA3_224()),
+    "sha3_256": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.8"), hashes.SHA3_256()),
+    "sha3_384": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.9"), hashes.SHA3_384()),
+    "sha3_512": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.10"), hashes.SHA3_512()),
+    "shake128": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.11"), hashes.SHAKE128(32)),
+    "shake256": (univ.ObjectIdentifier("2.16.840.1.101.3.4.2.12"), hashes.SHAKE256(64)),
 }
 
-_HASH_OID_2_NAME = {oid: name for name, oid in _HASH_NAME_2_OID.items()}
+_HASH_OID_2_NAME = {oid: name for name, (oid, _) in _HASH_REGISTRY.items()}
 
 
 def sha_alg_name_to_oid(name: str) -> univ.ObjectIdentifier:
-    """Return the SHA-family OID for ``name`` (e.g. ``"sha256"``)."""
+    """Return the hash OID for ``name`` (e.g. ``"sha256"`` or ``"sha3_256"``)."""
     key = name.lower()
-    if key not in _HASH_NAME_2_OID:
+    if key not in _HASH_REGISTRY:
         raise ValueError(f"Unsupported hash algorithm: {name}")
-    return _HASH_NAME_2_OID[key]
+    return _HASH_REGISTRY[key][0]
 
 
 def compute_hash(alg_name: str, data: bytes) -> bytes:
     """Compute a digest using ``cryptography`` primitives. Mirrors source helper."""
     name = alg_name.lower()
-    if name == "sha224":
-        digest = hashes.Hash(hashes.SHA224())
-    elif name == "sha256":
-        digest = hashes.Hash(hashes.SHA256())
-    elif name == "sha384":
-        digest = hashes.Hash(hashes.SHA384())
-    elif name == "sha512":
-        digest = hashes.Hash(hashes.SHA512())
-    elif name == "shake128":
-        digest = hashes.Hash(hashes.SHAKE128(32))
-    elif name == "shake256":
-        digest = hashes.Hash(hashes.SHAKE256(64))
-    else:
+    if name not in _HASH_REGISTRY:
         raise ValueError(f"Unsupported hash algorithm: {alg_name}")
+    digest = hashes.Hash(_HASH_REGISTRY[name][1])
     digest.update(data)
     return digest.finalize()
 
@@ -624,21 +619,6 @@ for _curve in CURVE_NAMES_TO_INSTANCES.values():
     CURVE_NAME_2_OID[_curve.name.lower()] = univ.ObjectIdentifier(_tmp_oid.dotted_string)
 
 
-_ALLOWED_HASH_TYPES: Dict[str, hashes.HashAlgorithm] = {
-    "sha1": hashes.SHA1(),
-    "sha224": hashes.SHA224(),
-    "sha256": hashes.SHA256(),
-    "sha384": hashes.SHA384(),
-    "sha512": hashes.SHA512(),
-    "shake128": hashes.SHAKE128(32),
-    "shake256": hashes.SHAKE256(64),
-    "sha3_224": hashes.SHA3_224(),
-    "sha3_256": hashes.SHA3_256(),
-    "sha3_384": hashes.SHA3_384(),
-    "sha3_512": hashes.SHA3_512(),
-}
-
-
 KEY_CLASS_MAPPING = {
     "RSAPrivateKey": "rsa",
     "RSAPublicKey": "rsa",
@@ -672,8 +652,8 @@ def hash_name_to_instance(alg: str) -> hashes.HashAlgorithm:
     """Return the :mod:`cryptography` hash instance for *alg* (e.g. ``"sha256"``)."""
     try:
         if "-" in alg:
-            return _ALLOWED_HASH_TYPES[alg.split("-")[1]]
-        return _ALLOWED_HASH_TYPES[alg]
+            return _HASH_REGISTRY[alg.split("-")[1]][1]
+        return _HASH_REGISTRY[alg][1]
     except KeyError as err:
         raise ValueError(f"Unsupported hash algorithm: {alg}") from err
 
