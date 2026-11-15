@@ -15,7 +15,10 @@ Trimmed copy of ``cmp-test-suite/resources/oidutils.py`` and
 catalogue (hybrid, composite, chempat, traditional) lives in the source repo.
 """
 
-from typing import Dict, Optional, Tuple, Union
+import dataclasses
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Dict, Mapping, Optional, Tuple, Union
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -37,7 +40,9 @@ from pyasn1_alt_modules import (
     rfc9708,
 )
 
+from keyutils_py.asn1utils import try_decode_pyasn1
 from keyutils_py.enums import SigAlgParametersSpec
+from keyutils_py.exceptions import BadAlg, BadSigAlgIDParams
 
 # ---------------------------------------------------------------------------
 # Base OID prefixes
@@ -803,7 +808,7 @@ def hash_name_to_instance(alg: str) -> hashes.HashAlgorithm:
 
 
 # ---------------------------------------------------------------------------
-# AlgorithmIdentifier parameter-shape catalog (drives validate_sig_alg_id)
+# Signature algorithm table: one row per signature OID, derived from the tables above
 # ---------------------------------------------------------------------------
 
 
@@ -812,45 +817,230 @@ _PKIX_CMP_ALG_ROOT = univ.ObjectIdentifier((1, 3, 6, 1, 5, 5, 7, 6))
 id_xmss = _PKIX_CMP_ALG_ROOT + (34,)
 id_xmssmt = _PKIX_CMP_ALG_ROOT + (35,)
 
-
-_SIG_ALG_OID_2_PARAMETERS_SPEC: Dict[univ.ObjectIdentifier, SigAlgParametersSpec] = {}
-
-# RSA PKCS#1 v1.5 — parameters MUST be NULL.
-for _oid in RSA_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_NULL
-
-# RSASSA-PSS: id-RSASSA-PSS carries RSASSA-PSS-params; SHAKE variants must be absent.
-_SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS] = SigAlgParametersSpec.MUST_BE_RSASSA_PSS_PARAMS
-_SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS_SHAKE128] = SigAlgParametersSpec.MUST_BE_ABSENT
-_SIG_ALG_OID_2_PARAMETERS_SPEC[rfc9481.id_RSASSA_PSS_SHAKE256] = SigAlgParametersSpec.MUST_BE_ABSENT
-
-# ECDSA + EdDSA + DSA — parameters absent.
-for _oid in ECDSA_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-for _oid in ED_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-for _oid in DSA_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-
-# PQ signatures (ML-DSA, SLH-DSA, Falcon, with and without pre-hash) — absent.
-for _oid in PQ_SIG_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-for _oid in PQ_SIG_PRE_HASH_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-
-# Stateful-hash — absent.
-for _oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
-_SIG_ALG_OID_2_PARAMETERS_SPEC.setdefault(rfc9708.id_alg_hss_lms_hashsig, SigAlgParametersSpec.MUST_BE_ABSENT)
-_SIG_ALG_OID_2_PARAMETERS_SPEC.setdefault(id_xmss, SigAlgParametersSpec.MUST_BE_ABSENT)
-_SIG_ALG_OID_2_PARAMETERS_SPEC.setdefault(id_xmssmt, SigAlgParametersSpec.MUST_BE_ABSENT)
-
-# Composite-sig — absent.
-for _oid in COMPOSITE_SIG_OID_TO_NAME:
-    _SIG_ALG_OID_2_PARAMETERS_SPEC[_oid] = SigAlgParametersSpec.MUST_BE_ABSENT
+# The digest of a CMS SignerInfo for SLH-DSA, per parameter set (RFC 9814 Section 4).
+_SLH_DSA_CMS_DIGEST = {
+    "slh-dsa-sha2-128s": "sha256",
+    "slh-dsa-sha2-128f": "sha256",
+    "slh-dsa-sha2-192s": "sha512",
+    "slh-dsa-sha2-192f": "sha512",
+    "slh-dsa-sha2-256s": "sha512",
+    "slh-dsa-sha2-256f": "sha512",
+    "slh-dsa-shake-128s": "shake128",
+    "slh-dsa-shake-128f": "shake128",
+    "slh-dsa-shake-192s": "shake256",
+    "slh-dsa-shake-192f": "shake256",
+    "slh-dsa-shake-256s": "shake256",
+    "slh-dsa-shake-256f": "shake256",
+}
 
 
-SIG_ALG_OID_2_PARAMETERS_SPEC: Dict[univ.ObjectIdentifier, SigAlgParametersSpec] = dict(_SIG_ALG_OID_2_PARAMETERS_SPEC)
+@dataclass(frozen=True)
+class SigAlgInfo:
+    """What the registry knows about one signature algorithm; the only thing the dispatch reads.
+
+    ``hash_alg`` is the hash the OID names (``None`` if it names none, like EdDSA or the pure PQ OIDs). For
+    ``id-RSASSA-PSS`` it is ``None`` in the table, because the hash is in the parameters; the row that
+    :func:`get_sig_alg_info` returns for an identifier carries it, together with ``mgf1_hash_alg`` and
+    ``salt_length``.
+
+    :param oid: The signature algorithm OID.
+    :param name: The registered name, e.g. ``rsa-sha256`` or ``composite-sig-ml-dsa-44-rsa2048-pss``.
+    :param family: ``rsa``, ``rsa-pss``, ``ecdsa``, ``eddsa``, ``dsa``, ``ml-dsa``, ``slh-dsa``, ``falcon``,
+        ``hss``, ``xmss``, ``xmssmt`` or ``composite``.
+    :param key_name: The ``get_key_name`` value of a key that may use the OID; ``None`` for composite (the key's
+        ``get_oid`` decides) and unused for the stateful families (``get_oid`` of the key decides, too).
+    :param hash_alg: The hash of the OID; for composite the hash of the pre-hashed message ``M'``.
+    :param pre_hash: HashML-DSA / HashSLH-DSA OID: the key must run in pre-hash mode with ``hash_alg``.
+    :param pss: RSASSA-PSS padding (``rsa-pss`` and the composite ``-pss`` OIDs).
+    :param params: The shape of the ``parameters`` field.
+    :param cms_digest: The ``SignerInfo.digestAlgorithm`` to use with the OID (RFC 8419 Section 3.1 for EdDSA,
+        RFC 9882 Section 4 for ML-DSA, RFC 9814 Section 4 for SLH-DSA, the hash of the OID otherwise).
+    :param mgf1_hash_alg: The MGF1 hash, only set from ``RSASSA-PSS-params``.
+    :param salt_length: The salt length, only set from ``RSASSA-PSS-params`` (the DEFAULT 20 applied).
+    """
+
+    oid: univ.ObjectIdentifier
+    name: str
+    family: str
+    key_name: Optional[str]
+    hash_alg: Optional[str]
+    pre_hash: bool
+    pss: bool
+    params: SigAlgParametersSpec
+    cms_digest: Optional[str]
+    mgf1_hash_alg: Optional[str] = None
+    salt_length: Optional[int] = None
+
+
+def _build_sig_alg_rows() -> Dict[univ.ObjectIdentifier, SigAlgInfo]:
+    """Derive one :class:`SigAlgInfo` per signature OID from the family tables of this module."""
+    absent, null = SigAlgParametersSpec.MUST_BE_ABSENT, SigAlgParametersSpec.MUST_BE_NULL
+    rows: Dict[univ.ObjectIdentifier, SigAlgInfo] = {}
+
+    def add(oid, name, family, key_name, hash_alg, params=absent, *, cms_digest=None, pre_hash=False, pss=False):
+        rows[oid] = SigAlgInfo(oid, name, family, key_name, hash_alg, pre_hash, pss, params, cms_digest)
+
+    for oid, name in RSA_OID_2_NAME.items():
+        hash_alg = name.split("-", 1)[1]
+        add(oid, name, "rsa", "rsa", hash_alg, null, cms_digest=hash_alg)
+    # RFC 3370 Section 3.2: rsaEncryption as signature algorithm names no hash; the caller gives it.
+    add(rfc8017.rsaEncryption, "rsa-encryption", "rsa", "rsa", None, null)
+    for oid, name in RSASSA_PSS_OID_2_NAME.items():
+        if oid == rfc9481.id_RSASSA_PSS:  # hash, MGF1 and salt are in the parameters (RFC 4055 Section 3.1)
+            add(oid, name, "rsa-pss", "rsa", None, SigAlgParametersSpec.MUST_BE_RSASSA_PSS_PARAMS, pss=True)
+        else:
+            hash_alg = name.split("-", 1)[1]
+            add(oid, name, "rsa-pss", "rsa", hash_alg, cms_digest=hash_alg, pss=True)
+    for oid, name in ECDSA_OID_2_NAME.items():
+        hash_alg = name.split("-", 1)[1]
+        add(oid, name, "ecdsa", "ecdsa", hash_alg, cms_digest=hash_alg)
+    for oid, name in DSA_OID_2_NAME.items():
+        hash_alg = name.split("-", 1)[1]
+        add(oid, name, "dsa", "dsa", hash_alg, cms_digest=hash_alg)
+    for oid, name in ED_OID_2_NAME.items():  # RFC 8419 Section 3.1
+        add(oid, name, "eddsa", name, None, cms_digest="sha512" if name == "ed25519" else "shake256")
+
+    pure = {
+        "ml-dsa": [n for n, oid in ML_DSA_NAME_2_OID.items() if oid not in ML_DSA_PRE_HASH_OID_2_NAME],
+        "slh-dsa": [n for n, oid in SLH_DSA_NAME_2_OID.items() if oid not in SLH_DSA_PRE_HASH_OID_2_NAME],
+    }
+    for oid, name in ML_DSA_OID_2_NAME.items():
+        if oid not in ML_DSA_PRE_HASH_OID_2_NAME:
+            add(oid, name, "ml-dsa", name, None, cms_digest="sha512")
+    for oid, name in SLH_DSA_OID_2_NAME.items():
+        if oid not in SLH_DSA_PRE_HASH_OID_2_NAME:
+            add(oid, name, "slh-dsa", name, None, cms_digest=_SLH_DSA_CMS_DIGEST[name])
+    for family, table in (("ml-dsa", ML_DSA_PRE_HASH_OID_2_NAME), ("slh-dsa", SLH_DSA_PRE_HASH_OID_2_NAME)):
+        for oid, name in table.items():
+            base = next(p for p in pure[family] if name.startswith(p + "-"))
+            hash_alg = name[len(base) + 1 :]
+            add(oid, name, family, base, hash_alg, cms_digest=hash_alg, pre_hash=True)
+    for oid, name in FALCON_OID_2_NAME.items():  # test OIDs, no RFC: the CMS digest is the one of ML-DSA
+        add(oid, name, "falcon", name, None, cms_digest="sha512")
+    for oid, name in PQ_STATEFUL_HASH_SIG_OID_2_NAME.items():
+        add(oid, name, name, name, None)
+    for oid, name in COMPOSITE_SIG_OID_TO_NAME.items():
+        hash_alg = COMPOSITE_SIG_PREHASH_OID_2_HASH[oid]
+        add(oid, name, "composite", None, hash_alg, cms_digest=hash_alg, pss=name.endswith("-pss"))
+    return rows
+
+
+SIG_ALG_OID_2_INFO: Mapping[univ.ObjectIdentifier, SigAlgInfo] = MappingProxyType(_build_sig_alg_rows())
+
+# The parameter shapes of the table, as the catalogue that existed before the table.
+SIG_ALG_OID_2_PARAMETERS_SPEC: Dict[univ.ObjectIdentifier, SigAlgParametersSpec] = {
+    oid: info.params for oid, info in SIG_ALG_OID_2_INFO.items()
+}
+
+# (key name, hash) -> OID for the identifiers that name the hash in the OID (``None`` for none): the reverse index
+# of the rows that ``prepare_sig_alg_id`` reads. RSASSA-PSS, rsaEncryption, composite and the stateful families are
+# not in it: their identifier comes from the parameters or from the key.
+_SIG_ALG_OID_BY_KEY_HASH: Dict[Tuple[Optional[str], Optional[str]], univ.ObjectIdentifier] = {
+    (info.key_name, info.hash_alg): oid
+    for oid, info in SIG_ALG_OID_2_INFO.items()
+    if info.family in ("rsa", "ecdsa", "dsa", "eddsa", "ml-dsa", "slh-dsa", "falcon")
+    and not (info.family == "rsa" and info.hash_alg is None)
+}
+
+
+def _is_parameters_null(parameters) -> bool:
+    """Return True if the ``parameters`` field of an ``AlgorithmIdentifier`` carries ASN.1 NULL."""
+    if not parameters.isValue:
+        return False
+    if isinstance(parameters, univ.Null):
+        return True
+    return hasattr(parameters, "asOctets") and parameters.asOctets() == b"\x05\x00"
+
+
+def _read_rsassa_pss_parameters(parameters) -> Tuple[str, str, int]:
+    """Return ``(hash, MGF1 hash, salt length)`` of ``RSASSA-PSS-params``, with the DEFAULTs of RFC 4055 Section 3.1.
+
+    :raises BadSigAlgIDParams: If the parameters are absent, undecodable, name an unknown hash or a mask generation
+        function other than MGF1, use a different hash for MGF1, or carry a trailerField other than 1.
+    """
+    if not parameters.isValue:
+        raise BadSigAlgIDParams("RSASSA-PSS requires `parameters` to be present.")
+    if isinstance(parameters, rfc4055.RSASSA_PSS_params):
+        params = parameters
+    else:
+        try:
+            params, rest = try_decode_pyasn1(parameters, rfc4055.RSASSA_PSS_params())
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise BadSigAlgIDParams(f"RSASSA-PSS `parameters` is not a valid RSASSA-PSS-params: {exc}") from exc
+        if rest:
+            raise BadSigAlgIDParams("RSASSA-PSS `parameters` has trailing data.")
+
+    # DEFAULT hashAlgorithm sha1, maskGenAlgorithm MGF1 with sha1, saltLength 20, trailerField 1 (RFC 4055 3.1).
+    hash_oid = params["hashAlgorithm"]["algorithm"] if params["hashAlgorithm"].isValue else _HASH_REGISTRY["sha1"][0]
+    mgf = params["maskGenAlgorithm"]
+    if not mgf.isValue:
+        mgf_hash_oid = _HASH_REGISTRY["sha1"][0]
+    else:
+        if mgf["algorithm"] != rfc8017.id_mgf1:
+            raise BadSigAlgIDParams(f"`maskGenAlgorithm` must be MGF1, got {mgf['algorithm']}.")
+        mgf_params = mgf["parameters"]
+        try:
+            if isinstance(mgf_params, rfc5280.AlgorithmIdentifier):
+                mgf_hash_alg_id = mgf_params
+            else:
+                mgf_hash_alg_id, _ = try_decode_pyasn1(mgf_params, rfc5280.AlgorithmIdentifier())
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise BadSigAlgIDParams(f"The MGF1 parameters are not an AlgorithmIdentifier: {exc}") from exc
+        mgf_hash_oid = mgf_hash_alg_id["algorithm"]
+
+    hash_alg, mgf1_hash_alg = _HASH_OID_2_NAME.get(hash_oid), _HASH_OID_2_NAME.get(mgf_hash_oid)
+    if hash_alg is None or mgf1_hash_alg is None:
+        raise BadSigAlgIDParams("Unrecognised hash algorithm in the RSASSA-PSS parameters.")
+    if hash_alg != mgf1_hash_alg:
+        raise BadSigAlgIDParams(f"MGF1 hash ({mgf1_hash_alg}) and `hashAlgorithm` ({hash_alg}) must match.")
+    if int(params["trailerField"]) != 1:
+        raise BadSigAlgIDParams(f"`trailerField` must be 1, got {int(params['trailerField'])}.")
+    return hash_alg, mgf1_hash_alg, int(params["saltLength"])
+
+
+def get_sig_alg_info(
+    alg_id: Union[rfc5280.AlgorithmIdentifier, univ.ObjectIdentifier], *, strict: bool = False
+) -> SigAlgInfo:
+    """Resolve a signature OID or ``AlgorithmIdentifier`` to its :class:`SigAlgInfo` row.
+
+    For ``id-RSASSA-PSS`` the returned row carries the hash, the MGF1 hash and the salt length read from the
+    parameters, with the DEFAULT values of RFC 4055 Section 3.1 (SHA-1, MGF1 with SHA-1, salt length 20) where a
+    field is omitted. Anything with ``["algorithm"]`` and ``["parameters"]`` works as ``alg_id``, not only the
+    pyasn1 class; an OID alone is not checked for parameters.
+
+    :param alg_id: The signature ``AlgorithmIdentifier`` or its OID.
+    :param strict: ``False`` accepts absent and NULL parameters where RFC 4055 Section 5 and RFC 5754 Section 3.2
+        say implementations MUST accept both (the PKCS#1 v1.5 identifiers); ``True`` is the generation rule
+        (NULL is required there). A parameter that must be absent is refused in both modes.
+    :raises BadAlg: If the OID is not a signature OID.
+    :raises BadSigAlgIDParams: If the parameters are malformed for the OID (for RSASSA-PSS: unreadable, MGF1 hash
+        different from the hash, trailerField other than 1).
+    """
+    if isinstance(alg_id, univ.ObjectIdentifier):
+        oid, parameters = alg_id, None
+    else:
+        oid, parameters = alg_id["algorithm"], alg_id["parameters"]
+    info = SIG_ALG_OID_2_INFO.get(oid)
+    if info is None:
+        raise BadAlg(f"Unsupported signature AlgorithmIdentifier OID: {may_return_oid_to_name(oid)}.")
+    if parameters is None:
+        return info
+
+    shown = parameters.prettyPrint() if parameters.isValue else "<absent>"
+    if info.params is SigAlgParametersSpec.MUST_BE_ABSENT:
+        if parameters.isValue:
+            raise BadSigAlgIDParams(f"AlgorithmIdentifier `parameters` must be absent for {info.name}; got {shown}")
+    elif info.params is SigAlgParametersSpec.MUST_BE_NULL:
+        if parameters.isValue and not _is_parameters_null(parameters):
+            raise BadSigAlgIDParams(f"AlgorithmIdentifier `parameters` must be NULL for {info.name}; got {shown}")
+        if strict and not parameters.isValue:
+            raise BadSigAlgIDParams(f"AlgorithmIdentifier `parameters` must be NULL for {info.name}; got {shown}")
+    else:
+        hash_alg, mgf1_hash_alg, salt_length = _read_rsassa_pss_parameters(parameters)
+        return dataclasses.replace(
+            info, hash_alg=hash_alg, cms_digest=hash_alg, mgf1_hash_alg=mgf1_hash_alg, salt_length=salt_length
+        )
+    return info
 
 
 # OID → ASN.1 spec class for parameter decoding.
