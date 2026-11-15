@@ -26,21 +26,32 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from pyasn1.codec.der import encoder
 from pyasn1.error import PyAsn1Error
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc5280, rfc8018, rfc8702, rfc9044, rfc9480
+from pyasn1_alt_modules import rfc3565, rfc5084, rfc5280, rfc8018, rfc8702, rfc9044, rfc9480
 
 from keyutils_py import primitives
-from keyutils_py._algs import KDF_BY_OID, MAC_BY_OID, KdfRow, MacRow
+from keyutils_py._algs import CONTENT_BY_OID, KDF_BY_OID, MAC_BY_OID, WRAP_BY_OID, ContentRow, KdfRow, MacRow, WrapRow
 from keyutils_py.asn1utils import try_decode_pyasn1
 from keyutils_py.exceptions import BadAlg, BadAlgParams, BadAsn1Data, IntegrityError
 from keyutils_py.keys.key_pyasn1_utils import MAX_PBKDF2_ITERATIONS
 from keyutils_py.oids import _HASH_OID_2_NAME, _HASH_REGISTRY, _is_parameters_null
 
-__all__ = ["compute_mac", "kdf_derive", "mac_key_length", "verify_mac"]
+__all__ = [
+    "Encrypted",
+    "compute_mac",
+    "decrypt_content",
+    "encrypt_content",
+    "kdf_derive",
+    "mac_key_length",
+    "unwrap_cek",
+    "verify_mac",
+    "wrap_cek",
+    "wrap_key_length",
+]
 
 AlgId = rfc9480.AlgorithmIdentifier
 
@@ -377,3 +388,156 @@ def mac_key_length(mac: AlgId) -> Optional[int]:
     """
     row = _row(MAC_BY_OID, mac, "message authentication code")
     return row.bits // 8 if row.bits is not None else None
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Key wrap
+# ---------------------------------------------------------------------------------------------------------------
+
+_WRAP_IMPL: Dict[str, Tuple[Callable[[bytes, bytes], bytes], Callable[[bytes, bytes], bytes]]] = {
+    "kw": (primitives.aes_kw_wrap, primitives.aes_kw_unwrap),
+    "kwp": (primitives.aes_kwp_wrap, primitives.aes_kwp_unwrap),
+}
+
+
+def _wrap_row(wrap: Any) -> WrapRow:
+    """Return the row of an AES key wrap identifier, whose parameters must be absent (RFC 3565 Section 2.3.2)."""
+    row = _row(WRAP_BY_OID, wrap, "AES key wrap algorithm")
+    _require_absent(wrap, "an AES key wrap algorithm")
+    return row
+
+
+def _check_kek(row: WrapRow, kek: bytes) -> None:
+    """Raise ``BadAlgParams`` if the KEK has not the size that the OID names."""
+    if len(kek) != row.kek_len:
+        raise BadAlgParams(f"The key wrap OID names an AES key of {row.kek_len} octets, the KEK has {len(kek)}.")
+
+
+def wrap_key_length(wrap: AlgId) -> int:
+    """Return the octets of KEK that the key wrap OID names (16, 24 or 32).
+
+    :raises TypeError: If ``wrap`` is no ``AlgorithmIdentifier``.
+    :raises BadAlg: If the OID is no AES key wrap.
+    :raises BadAlgParams: If the identifier has parameters.
+    """
+    return _wrap_row(wrap).kek_len
+
+
+def wrap_cek(wrap: AlgId, kek: bytes, cek: bytes) -> bytes:
+    """Wrap ``cek`` under ``kek`` with the AES key wrap that ``wrap`` names.
+
+    AES key wrap (RFC 3394) takes a ``cek`` of a multiple of 8 octets, at least 16 (a ``ValueError`` otherwise); AES key
+    wrap with padding (RFC 5649) takes any size from 1 octet. The KEK must have the size that the OID names.
+
+    :raises TypeError: If ``wrap`` is no ``AlgorithmIdentifier``.
+    :raises BadAlg: If the OID is no AES key wrap.
+    :raises BadAlgParams: If the identifier has parameters, or the KEK has not the size of the OID.
+    :raises ValueError: If ``cek`` has a size that the algorithm cannot wrap.
+    """
+    row = _wrap_row(wrap)
+    _check_kek(row, kek)
+    return _WRAP_IMPL[row.mode][0](kek, cek)
+
+
+def unwrap_cek(wrap: AlgId, kek: bytes, wrapped: bytes) -> bytes:
+    """Unwrap ``wrapped`` under ``kek`` with the AES key wrap that ``wrap`` names.
+
+    :raises IntegrityError: If the check value does not verify (a wrong KEK, a changed or truncated value, or a value
+        that was wrapped with the other mode), and for a ``wrapped`` of an impossible size. The message says no more.
+    :raises BadAlg: As :func:`wrap_cek`.
+    :raises BadAlgParams: As :func:`wrap_cek`.
+    """
+    row = _wrap_row(wrap)
+    _check_kek(row, kek)
+    return _WRAP_IMPL[row.mode][1](kek, wrapped)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Content encryption
+# ---------------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Encrypted:
+    """The result of :func:`encrypt_content`: the ciphertext, and for AES-GCM the authentication tag."""
+
+    ciphertext: bytes
+    tag: Optional[bytes] = None
+
+
+def _content_row(enc: Any) -> ContentRow:
+    """Return the row of a content encryption identifier."""
+    return _row(CONTENT_BY_OID, enc, "content encryption algorithm")
+
+
+def _check_cek(row: ContentRow, cek: bytes) -> None:
+    """Raise ``BadAlgParams`` if the key has not the size that the OID names."""
+    if len(cek) != row.key_len:
+        raise BadAlgParams(f"The content encryption OID names a key of {row.key_len} octets, the key has {len(cek)}.")
+
+
+def _cbc_iv(enc: Any) -> bytes:
+    """Return the IV of AES-CBC, the parameters (RFC 3565 Section 4.1): an OCTET STRING of 16 octets."""
+    return _parameters(enc, rfc3565.AES_IV, "AES-CBC").asOctets()
+
+
+def _gcm_parameters(enc: Any) -> Tuple[bytes, int]:
+    """Return ``(nonce, tag length)`` of ``GCMParameters`` (RFC 5084 Section 3.2); the length DEFAULT is 12."""
+    params = _parameters(enc, rfc5084.GCMParameters, "AES-GCM")
+    nonce = params["aes-nonce"].asOctets()
+    if not 8 <= len(nonce) <= 128:
+        raise BadAlgParams(f"The AES-GCM nonce must have 8 to 128 octets, not {len(nonce)}.")
+    return nonce, int(params["aes-ICVlen"])
+
+
+def encrypt_content(enc: AlgId, cek: bytes, plaintext: bytes, *, aad: Optional[bytes] = None) -> Encrypted:
+    """Encrypt ``plaintext`` with the AES mode that ``enc`` names, with the IV or nonce of its parameters.
+
+    * AES-CBC (RFC 3565, RFC 9481 Section 5.1) with PKCS#7 padding: the parameters are the IV, an OCTET STRING of 16
+      octets. ``aad`` is a ``TypeError``.
+    * AES-GCM (RFC 5084): the parameters are ``GCMParameters``, a nonce of 8 to 128 octets (the range of the
+      implementation) and ``aes-ICVlen`` (DEFAULT 12, 12 to 16). The result carries the tag cut to that length.
+
+    The key must have the size that the OID names.
+
+    :raises TypeError: If ``enc`` is no ``AlgorithmIdentifier``, or ``aad`` is given for AES-CBC.
+    :raises BadAlg: If the OID is no content encryption algorithm.
+    :raises BadAlgParams: If the parameters are absent or inconsistent, or the key has not the size of the OID.
+    :raises BadAsn1Data: If the parameters do not decode (a wrong IV size, a tag length outside 12 to 16).
+    """
+    row = _content_row(enc)
+    _check_cek(row, cek)
+    if row.mode == "cbc":
+        if aad is not None:
+            raise TypeError("`aad` is only for AES-GCM.")
+        return Encrypted(primitives.aes_cbc_encrypt(cek, _cbc_iv(enc), plaintext))
+    nonce, tag_length = _gcm_parameters(enc)
+    ciphertext, tag = primitives.aes_gcm_encrypt(cek, nonce, plaintext, aad)
+    return Encrypted(ciphertext, tag[:tag_length])
+
+
+def decrypt_content(
+    enc: AlgId, cek: bytes, ciphertext: bytes, *, tag: Optional[bytes] = None, aad: Optional[bytes] = None
+) -> bytes:
+    """Decrypt what :func:`encrypt_content` made, with the same checks.
+
+    ``tag`` is required for AES-GCM and must have the ``aes-ICVlen`` of the parameters; ``tag`` and ``aad`` are a
+    ``TypeError`` for AES-CBC.
+
+    :raises IntegrityError: If the AES-GCM tag does not verify, or the AES-CBC padding or length is wrong; the message
+        does not say which.
+    :raises TypeError: If ``tag`` or ``aad`` do not belong to the mode.
+    :raises BadAlgParams: As :func:`encrypt_content`, and if the tag has not the length of the parameters.
+    """
+    row = _content_row(enc)
+    _check_cek(row, cek)
+    if row.mode == "cbc":
+        if tag is not None or aad is not None:
+            raise TypeError("`tag` and `aad` are only for AES-GCM.")
+        return primitives.aes_cbc_decrypt(cek, _cbc_iv(enc), ciphertext)
+    if tag is None:
+        raise TypeError("AES-GCM needs the `tag`.")
+    nonce, tag_length = _gcm_parameters(enc)
+    if len(tag) != tag_length:
+        raise BadAlgParams(f"The tag has {len(tag)} octets, `aes-ICVlen` of the parameters says {tag_length}.")
+    return primitives.aes_gcm_decrypt(cek, nonce, ciphertext, tag, aad)

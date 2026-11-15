@@ -114,6 +114,18 @@ SPDX-License-Identifier: Apache-2.0 -->
   one message whatever differs, and refuses SHA-1 with `BadAlg` (HMAC, or PBMAC1 over SHA-1 as pseudorandom function or
   HMAC) unless the caller passes `allow_sha1=True`; `compute_mac` does not refuse it. `mac_key_length` is 16, 24 or 32
   for AES-GMAC and `None` otherwise. Not yet exported from `keyutils_py`.
+- `keyutils_py.mechanisms.wrap_cek(wrap, kek, cek)`, `unwrap_cek(wrap, kek, wrapped)` and `wrap_key_length(wrap)` for
+  AES key wrap (RFC 3394, `id-aes128/192/256-wrap`) and AES key wrap with padding (RFC 5649,
+  `id-aes128/192/256-wrap-pad`). The KEK must have the size that the OID names (`BadAlgParams` otherwise, also on
+  unwrap), the identifier must have no parameters (RFC 3565 Section 2.3.2), and an unwrap that does not verify, for
+  whatever reason, is `IntegrityError` with one message. Key wrap with padding wraps a key of any size from 1 octet, key
+  wrap one of a multiple of 8 octets from 16 (`ValueError` otherwise).
+- `keyutils_py.mechanisms.encrypt_content(enc, cek, plaintext, *, aad=None)`, `decrypt_content(enc, cek, ciphertext, *,
+  tag=None, aad=None)` and the frozen `Encrypted(ciphertext, tag=None)` for AES-CBC with PKCS#7 padding (the parameters
+  are the 16 octet IV, RFC 3565, RFC 9481 Section 5.1) and AES-GCM (`GCMParameters`: a nonce of 8 to 128 octets and
+  `aes-ICVlen`, DEFAULT 12; the tag is cut to that length, RFC 5084). The key must have the size of the OID. A CBC
+  padding or length error and a GCM tag error are `IntegrityError` with one message, so that they are no padding oracle.
+  `aad` or `tag` for AES-CBC, and a missing `tag` for AES-GCM, are a `TypeError`. Not yet exported from `keyutils_py`.
 
 ## Changed
 
