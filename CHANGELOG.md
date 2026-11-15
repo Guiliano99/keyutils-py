@@ -104,6 +104,16 @@ SPDX-License-Identifier: Apache-2.0 -->
   count is capped at `MAX_PBKDF2_ITERATIONS`; PBKDF2 takes no `info`. An OID in no table is `BadAlg`, parameters that
   are absent, present wrongly or inconsistent are `BadAlgParams`, undecodable ones `BadAsn1Data`. Not yet exported from
   `keyutils_py`.
+- `keyutils_py.mechanisms.compute_mac(mac, key, data)`, `verify_mac(mac, key, data, expected, *, allow_sha1=False)`
+  and `mac_key_length(mac)` for the MAC an `AlgorithmIdentifier` names: HMAC with SHA-1 (both OIDs), SHA-2 and SHA-3
+  (parameters absent, NULL also for SHA-1 and SHA-2), KMAC128/256 (absent parameters mean 256 or 512 bits and no
+  customization, `KMACwithSHAKE-params` change both, RFC 8702 Section 3.4), AES-GMAC (the key has the size of the OID,
+  the parameters are required, the MAC is the tag cut to the `length` of the parameters, DEFAULT 12 octets, RFC 9044
+  Section 3.1) and PBMAC1 (`key` is the password; PBKDF2 with a `keyLength` and an HMAC; an absent `keyLength` is
+  `BadAlgParams`, RFC 8018 Section 7.1). `verify_mac` compares with `hmac.compare_digest`, raises `IntegrityError` with
+  one message whatever differs, and refuses SHA-1 with `BadAlg` (HMAC, or PBMAC1 over SHA-1 as pseudorandom function or
+  HMAC) unless the caller passes `allow_sha1=True`; `compute_mac` does not refuse it. `mac_key_length` is 16, 24 or 32
+  for AES-GMAC and `None` otherwise. Not yet exported from `keyutils_py`.
 
 ## Changed
 
