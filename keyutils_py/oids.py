@@ -447,6 +447,7 @@ ALL_COMPOSITE_SIG_COMBINATIONS = [
 KEM_OID_2_NAME.update(CHEMPAT_OID_2_NAME)
 KEM_OID_2_NAME.update({univ.ObjectIdentifier(XWING_OID_STR): "xwing"})
 KEM_OID_2_NAME.update(COMPOSITE_KEM_OID_2_NAME)
+KEM_OID_2_NAME.update({rfc5990.id_kem_rsa: "rsa-kem"})
 
 # Populate the lookup table used by may_return_oid_to_name (defined earlier).
 _HYBRID_OID_2_NAME.update(COMPOSITE_SIG_OID_TO_NAME)
