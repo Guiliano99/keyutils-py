@@ -54,3 +54,15 @@ _Avoid_: KEM wrapper class names when the role is meant
 The single key factory that claims an algorithm name, OID or key type; the
 dispatch layer asks each family's factory in a fixed order and routes to the
 first owner.
+
+**Signature algorithm row**:
+The `SigAlgInfo` entry of one signature OID in `SIG_ALG_OID_2_INFO`: family, key name, hash, pre-hash mode, padding,
+parameter shape and CMS digest. Signing, verifying and the consistency check read it; nothing else decides what an OID
+means.
+_Avoid_: signature profile, algorithm spec
+
+**Pre-hash OID**:
+A signature OID that names the hash of the HashML-DSA or HashSLH-DSA mode (for example
+`id-ml-dsa-44-with-sha512`). The key signs in pre-hash mode with that hash; the pure OID of the same parameter set
+signs a different algorithm.
+_Avoid_: hash variant, prehashed OID
