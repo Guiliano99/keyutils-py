@@ -24,22 +24,23 @@ already decoded object of that specification.
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 from pyasn1.codec.der import encoder
 from pyasn1.error import PyAsn1Error
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc5280, rfc8018, rfc9480
+from pyasn1_alt_modules import rfc5280, rfc8018, rfc8702, rfc9044, rfc9480
 
 from keyutils_py import primitives
-from keyutils_py._algs import KDF_BY_OID, MAC_BY_OID, KdfRow
+from keyutils_py._algs import KDF_BY_OID, MAC_BY_OID, KdfRow, MacRow
 from keyutils_py.asn1utils import try_decode_pyasn1
-from keyutils_py.exceptions import BadAlg, BadAlgParams, BadAsn1Data
+from keyutils_py.exceptions import BadAlg, BadAlgParams, BadAsn1Data, IntegrityError
 from keyutils_py.keys.key_pyasn1_utils import MAX_PBKDF2_ITERATIONS
-from keyutils_py.oids import _HASH_OID_2_NAME, _is_parameters_null
+from keyutils_py.oids import _HASH_OID_2_NAME, _HASH_REGISTRY, _is_parameters_null
 
-__all__ = ["kdf_derive"]
+__all__ = ["compute_mac", "kdf_derive", "mac_key_length", "verify_mac"]
 
 AlgId = rfc9480.AlgorithmIdentifier
 
@@ -242,3 +243,137 @@ def kdf_derive(kdf: AlgId, secret: bytes, length: int, info: bytes = b"") -> byt
     if length < 1:
         raise ValueError(f"The length must be at least 1, not {length}.")
     return _KDF_IMPL[row.family](row, kdf, secret, length, info)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Message authentication codes
+# ---------------------------------------------------------------------------------------------------------------
+
+_KMAC_PARAMS = {"shake128": rfc8702.KMACwithSHAKE128_params, "shake256": rfc8702.KMACwithSHAKE256_params}
+
+
+def _refuse_sha1(hash_name: Optional[str], allow_sha1: bool) -> None:
+    """Raise ``BadAlg`` for SHA-1 unless the caller allows it."""
+    if hash_name == "sha1" and not allow_sha1:
+        raise BadAlg("A MAC over SHA-1 is refused unless the caller passes `allow_sha1=True`.")
+
+
+def _mac_hmac(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool) -> bytes:
+    """HMAC with the hash of the OID; the parameters are absent, or NULL for SHA-1 and SHA-2."""
+    assert row.hash is not None
+    _check_hmac_parameters(mac, row.hash, "HMAC")
+    _refuse_sha1(row.hash, allow_sha1)
+    return primitives.hmac_digest(row.hash, key, data)
+
+
+def _mac_kmac(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool) -> bytes:
+    """KMAC128 or KMAC256 (RFC 8702 Section 3.4): absent parameters mean 256 or 512 bits and no customization."""
+    del allow_sha1
+    assert row.hash is not None
+    params = _parameters(mac, _KMAC_PARAMS[row.hash], "KMAC", required=False)
+    if params is None:
+        bits, custom = _HASH_REGISTRY[row.hash][1].digest_size * 8, b""
+    else:
+        bits, custom = int(params["kMACOutputLength"]), params["customizationString"].asOctets()
+    if bits < 8 or bits % 8:
+        raise BadAlgParams(f"KMAC kMACOutputLength must be a positive multiple of 8 bits, not {bits}.")
+    return primitives.kmac(row.hash, key, data, mac_len=bits // 8, custom=custom)
+
+
+def _mac_gmac(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool) -> bytes:
+    """AES-GMAC (RFC 9044 Section 3.1): the tag truncated to ``length`` (DEFAULT 12) octets of the parameters."""
+    del allow_sha1
+    assert row.bits is not None
+    params = _parameters(mac, rfc9044.GCMParameters, "AES-GMAC")
+    if len(key) * 8 != row.bits:
+        raise BadAlgParams(f"AES-GMAC with a {row.bits} bit key needs {row.bits // 8} octets of key, not {len(key)}.")
+    nonce = params["nonce"].asOctets()
+    if not 8 <= len(nonce) <= 128:
+        raise BadAlgParams(f"The AES-GMAC nonce must have 8 to 128 octets, not {len(nonce)}.")
+    return primitives.gmac(key, nonce, data)[: int(params["length"])]
+
+
+def _mac_pbmac1(row: MacRow, mac: Any, key: bytes, data: bytes, allow_sha1: bool) -> bytes:
+    """PBMAC1 (RFC 8018 Section 7.1): PBKDF2 over the password ``key``, then HMAC under the derived key."""
+    del row
+    params = _parameters(mac, rfc8018.PBMAC1_params, "PBMAC1")
+    kdf = params["keyDerivationFunc"]
+    if kdf["algorithm"] != rfc8018.id_PBKDF2:
+        raise BadAlg(f"The key derivation function of PBMAC1 must be PBKDF2, not {kdf['algorithm']}.")
+    pbkdf2 = _read_pbkdf2(kdf)
+    if pbkdf2.key_length is None:
+        raise BadAlgParams("PBMAC1 needs the keyLength of PBKDF2-params: it is the length of the key of the MAC.")
+    scheme = params["messageAuthScheme"]
+    scheme_row = _row(MAC_BY_OID, scheme, "message authentication scheme of PBMAC1")
+    if scheme_row.family != "hmac" or scheme_row.hash is None:
+        raise BadAlg(f"PBMAC1 over {scheme_row.family} is not supported, only over HMAC.")
+    _check_hmac_parameters(scheme, scheme_row.hash, "the message authentication scheme of PBMAC1")
+    _refuse_sha1(pbkdf2.prf_hash, allow_sha1)
+    _refuse_sha1(scheme_row.hash, allow_sha1)
+    derived = primitives.pbkdf2(pbkdf2.prf_hash, key, pbkdf2.salt, pbkdf2.iterations, pbkdf2.key_length)
+    return primitives.hmac_digest(scheme_row.hash, derived, data)
+
+
+_MAC_IMPL: Dict[str, Callable[[MacRow, Any, bytes, bytes, bool], bytes]] = {
+    "hmac": _mac_hmac,
+    "kmac": _mac_kmac,
+    "gmac": _mac_gmac,
+    "pbmac1": _mac_pbmac1,
+}
+
+
+def _mac(mac: Any, key: bytes, data: bytes, allow_sha1: bool) -> bytes:
+    """Compute the MAC that ``mac`` names."""
+    row = _row(MAC_BY_OID, mac, "message authentication code")
+    return _MAC_IMPL[row.family](row, mac, key, data, allow_sha1)
+
+
+def compute_mac(mac: AlgId, key: bytes, data: bytes) -> bytes:
+    """Compute the MAC of ``data`` that the identifier ``mac`` names.
+
+    * HMAC with SHA-1 (``hMAC-SHA1`` and ``id-hmacWithSHA1``), SHA-2 and SHA-3: the parameters are absent, or NULL for
+      SHA-1 and SHA-2 (RFC 8018 Appendix B.1, RFC 9688 Section 4).
+    * KMAC128 and KMAC256 (RFC 8702 Section 3.4): absent parameters mean 256 or 512 bits of output and no customization
+      string; ``KMACwithSHAKE128-params`` and ``KMACwithSHAKE256-params`` change both. ``pycryptodome`` takes a key of
+      at least 16 (KMAC128) or 32 (KMAC256) octets, a shorter one is a ``ValueError``.
+    * AES-GMAC (RFC 9044): ``key`` has the size of the OID, the parameters are required; the nonce has 8 to 128 octets
+      and the MAC is the GCM tag cut to ``length`` octets of the parameters (DEFAULT 12).
+    * PBMAC1 (RFC 8018 Section 7.1, RFC 9481 Section 6.1.2): ``key`` is the password; the key derivation function must
+      be PBKDF2 with a ``keyLength``, the message authentication scheme an HMAC. The MAC key is the PBKDF2 output.
+
+    SHA-1 is not refused here, a test suite has to produce it; :func:`verify_mac` refuses it unless it is allowed.
+
+    :param mac: The identifier of the MAC, with its parameters.
+    :param key: The MAC key, or the password for PBMAC1.
+    :param data: The data to authenticate.
+    :raises TypeError: If ``mac`` is no ``AlgorithmIdentifier``.
+    :raises BadAlg: If the OID is no MAC, or PBMAC1 names another KDF than PBKDF2 or another scheme than HMAC.
+    :raises BadAlgParams: If the parameters or the key size do not fit the OID.
+    :raises BadAsn1Data: If the parameters cannot be decoded.
+    """
+    return _mac(mac, key, data, allow_sha1=True)
+
+
+def verify_mac(mac: AlgId, key: bytes, data: bytes, expected: bytes, *, allow_sha1: bool = False) -> None:
+    """Verify that ``expected`` is the MAC of ``data`` under ``mac`` and ``key``, in constant time.
+
+    Verification is a trust decision, so SHA-1 is refused unless the caller allows it: HMAC with SHA-1, and PBMAC1 with
+    SHA-1 as the pseudorandom function or as the HMAC, raise :class:`BadAlg` unless ``allow_sha1`` is true. Everything
+    else is as in :func:`compute_mac`.
+
+    :param expected: The MAC value that was received.
+    :param allow_sha1: Accept a MAC over SHA-1.
+    :raises IntegrityError: If the MAC does not match. The message does not say how it differs.
+    :raises BadAlg: As :func:`compute_mac`, and for SHA-1 without ``allow_sha1``.
+    """
+    if not hmac.compare_digest(_mac(mac, key, data, allow_sha1), expected):
+        raise IntegrityError("MAC verification failed.")
+
+
+def mac_key_length(mac: AlgId) -> Optional[int]:
+    """Return the octets of key that the MAC needs (AES-GMAC: 16, 24 or 32), or ``None`` if its key has any size.
+
+    :raises BadAlg: If the OID is no MAC.
+    """
+    row = _row(MAC_BY_OID, mac, "message authentication code")
+    return row.bits // 8 if row.bits is not None else None
