@@ -32,7 +32,6 @@ estimate_key_security_strength
 generate_key
 get_hash_from_oid
 get_key_name
-get_rsa_oaep_padding
 get_sig_alg_info
 kdf_derive
 list_algorithms

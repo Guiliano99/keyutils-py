@@ -36,8 +36,17 @@ from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from pyasn1.codec.der import encoder
 from pyasn1.error import PyAsn1Error
-from pyasn1.type import univ
-from pyasn1_alt_modules import rfc3565, rfc5084, rfc5280, rfc8018, rfc8702, rfc9044, rfc9480
+from pyasn1.type import tag, univ
+from pyasn1_alt_modules import (
+    rfc3565,
+    rfc4055,
+    rfc5084,
+    rfc5280,
+    rfc8018,
+    rfc8702,
+    rfc9044,
+    rfc9480,
+)
 
 from keyutils_py import primitives
 from keyutils_py._algs import (
@@ -45,6 +54,7 @@ from keyutils_py._algs import (
     CONTENT_OID,
     KDF_BY_OID,
     KDF_OID,
+    KT_OID,
     MAC_BY_OID,
     MAC_OID,
     PRF_OID,
@@ -610,7 +620,7 @@ def decrypt_content(
 # ---------------------------------------------------------------------------------------------------------------
 
 AlgKind = Literal["kdf", "mac", "wrap", "content", "kari", "key_transport"]
-"""The kinds of algorithm of :func:`make_alg_id`; only the first four have builders."""
+"""The kinds of algorithm of :func:`make_alg_id`; ``"kari"`` has no builder yet."""
 
 
 def _make(oid: univ.ObjectIdentifier, parameters: Any = None) -> AlgId:
@@ -737,12 +747,45 @@ def _build_aes_gcm(*, bits: int, nonce: bytes, tag_length: Optional[int] = None)
     return _make(_oid_of(CONTENT_OID, ("gcm", bits // 8), f"AES-GCM with a {bits} bit key"), params)
 
 
+def _oaep_field(alg_id: AlgId, number: int) -> Any:
+    """Return an identifier in the context tag ``[number]`` that RSAES-OAEP-params gives its three fields."""
+    return alg_id.subtype(
+        explicitTag=tag.Tag(tag.tagClassContext, tag.tagFormatConstructed, number), cloneValueFlag=True
+    )
+
+
+def _build_rsa_oaep(*, hash: str, mgf1_hash: Optional[str] = None, label: bytes = b"") -> AlgId:
+    """RSAES-OAEP (RFC 4055 Section 4.1): ``hash``, MGF1 over ``mgf1_hash`` (``hash`` if ``None``) and ``label``.
+
+    The identifiers of the hashes carry NULL, as the ones that RFC 4055 builds do; a field that has its DEFAULT value
+    (SHA-1, SHA-1 for MGF1, the empty label) is left out, as DER requires. SHA-1 and SHA-2 only.
+    """
+    mgf1_hash = hash if mgf1_hash is None else mgf1_hash
+    for name in (hash, mgf1_hash):
+        if name not in _HASHES_WITH_NULL:
+            raise BadAlg(f"RSAES-OAEP is defined over SHA-1 and SHA-2 (RFC 4055 Section 2.1), not {name!r}.")
+    params = rfc4055.RSAES_OAEP_params()
+    if hash != "sha1":
+        params["hashFunc"] = _oaep_field(_hash_alg_id(hash), 0)
+    if mgf1_hash != "sha1":
+        params["maskGenFunc"] = _oaep_field(_make(rfc4055.id_mgf1, _hash_alg_id(mgf1_hash)), 1)
+    if label:
+        params["pSourceFunc"] = _oaep_field(_make(rfc4055.id_pSpecified, univ.OctetString(label)), 2)
+    return _make(rfc4055.id_RSAES_OAEP, params)
+
+
+def _build_rsa_pkcs1v15() -> AlgId:
+    """RSAES-PKCS1-v1_5: ``rsaEncryption`` with NULL parameters (RFC 3370 Section 4.2.1)."""
+    return _make(KT_OID["pkcs1v15"], univ.Null(""))
+
+
 # pylint: enable=redefined-builtin
 _BUILDERS: Dict[str, Dict[str, Callable[..., AlgId]]] = {
     "kdf": {"hkdf": _build_hkdf, "kdf2": _build_kdf2, "kdf3": _build_kdf3, "pbkdf2": _build_pbkdf2},
     "mac": {"hmac": _build_hmac, "kmac": _build_kmac, "gmac": _build_gmac, "pbmac1": _build_pbmac1},
     "wrap": {"aes": _build_aes_wrap},
     "content": {"aes-cbc": _build_aes_cbc, "aes-gcm": _build_aes_gcm},
+    "key_transport": {"rsa-oaep": _build_rsa_oaep, "rsa-pkcs1v15": _build_rsa_pkcs1v15},
 }
 
 
@@ -764,13 +807,17 @@ def make_alg_id(kind: AlgKind, family: str, **params: Any) -> AlgId:
     * ``("wrap", "aes")``: ``bits`` (the KEK size), ``mode`` (``"kw"`` or ``"kwp"``).
     * ``("content", "aes-cbc")``: ``bits``, ``iv``.
     * ``("content", "aes-gcm")``: ``bits``, ``nonce``, ``tag_length=None`` (12 to 16; absent means 12).
+    * ``("key_transport", "rsa-oaep")``: ``hash``, ``mgf1_hash=None`` (then ``hash``), ``label=b""``; SHA-1 and SHA-2.
+      RFC 4055 form: the hash identifiers carry NULL and MGF1 has the identifier of its hash as parameter; the fields
+      that equal the DEFAULTs are left out, so SHA-1 with the empty label is an empty SEQUENCE.
+    * ``("key_transport", "rsa-pkcs1v15")``: no keyword; ``rsaEncryption`` with NULL.
 
     A builder writes what it is asked for and does not check sizes, so a test can build an identifier that a receiver
     refuses (a 15 octet IV, a PBKDF2 ``keyLength`` that differs from the length that is derived). SHA-1 and SHA-2
     inside the parameters of KDF2, KDF3 and the PBKDF2 ``prf`` carry NULL (RFC 9690 Appendix D, RFC 8018 Appendix B.1),
     SHA-3 none.
 
-    :param kind: The kind of algorithm. ``"kari"`` and ``"key_transport"`` have no builder yet.
+    :param kind: The kind of algorithm. ``"kari"`` has no builder yet.
     :param family: The family within the kind.
     :param params: The keywords of the family.
     :raises BadAlg: If the kind or family is unknown, or the table has no OID for the hash, size or mode.

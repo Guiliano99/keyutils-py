@@ -216,12 +216,12 @@ class TestMisuse(unittest.TestCase):
                 with self.assertRaises(BadAlg):
                     make_alg_id(kind, family, **params)  # type: ignore[arg-type]
 
-    def test_the_kinds_kari_and_key_transport_have_no_builder_yet(self):
-        """GIVEN the kinds kari and key_transport / WHEN built / THEN BadAlg: they are in no dispatch table yet."""
-        for kind, family in (("kari", "stdDH"), ("key_transport", "rsa-oaep"), ("kari", "mqv")):
-            with self.subTest(kind=kind, family=family):
+    def test_the_kind_kari_has_no_builder_yet(self):
+        """GIVEN the kind kari / WHEN built / THEN BadAlg: it is in no dispatch table yet."""
+        for family in ("stdDH", "mqv"):
+            with self.subTest(family=family):
                 with self.assertRaises(BadAlg):
-                    make_alg_id(kind, family, hash="sha256")  # type: ignore[arg-type]
+                    make_alg_id("kari", family, hash="sha256")  # type: ignore[arg-type]
 
     def test_a_value_that_cannot_be_written_is_a_value_error(self):
         """GIVEN iterations 0, a GMAC tag_length of 11, a GCM tag_length of 17 / WHEN built / THEN ValueError."""

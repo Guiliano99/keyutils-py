@@ -241,3 +241,4 @@ CONTENT_OID: Mapping[Tuple[str, int], univ.ObjectIdentifier] = MappingProxyType(
 )
 KARI_BY_OID: Mapping[univ.ObjectIdentifier, KariRow] = MappingProxyType({row.oid: row for row in KARI_ROWS})
 KT_BY_OID: Mapping[univ.ObjectIdentifier, KtRow] = MappingProxyType({row.oid: row for row in KT_ROWS})
+KT_OID: Mapping[str, univ.ObjectIdentifier] = MappingProxyType({row.padding: row.oid for row in KT_ROWS})

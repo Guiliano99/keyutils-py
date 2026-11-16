@@ -25,6 +25,7 @@ Top-level entry points:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union, get_args
 
 from Crypto.PublicKey import RSA
@@ -35,12 +36,14 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, paddin
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc4055, rfc9480, rfc9481
 
+from keyutils_py._algs import KT_BY_OID
 from keyutils_py.data_objects import FixedSHAKE128, FixedSHAKE256
 from keyutils_py.exceptions import (
     BadAlg,
-    BadAsn1Data,
+    BadAlgParams,
     BadDataFormat,
     BadSigAlgID,
+    IntegrityError,
     InvalidKeyCombination,
 )
 from keyutils_py.keys.abstract_pq import (
@@ -63,9 +66,10 @@ from keyutils_py.keys.composite_kem import CompositeKEMPrivateKey, CompositeKEMP
 from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigPublicKey
 from keyutils_py.keys.trad_kem_keys import DHKEMPublicKey, RSADecapKey, RSAEncapKey
 from keyutils_py.oids import (
+    _HASH_OID_2_NAME,
     CURVE_2_COFACTORS,
     SigAlgInfo,
-    get_hash_from_oid,
+    _is_parameters_null,
     get_sig_alg_info,
     hash_name_to_instance,
 )
@@ -571,89 +575,185 @@ def compute_decaps(
 
 
 # ---------------------------------------------------------------------------
-# RSA-OAEP helpers
+# RSA key transport (RSAES-PKCS1-v1_5 and RSAES-OAEP)
 # ---------------------------------------------------------------------------
 
+MAX_OAEP_LABEL_LENGTH = 4096
+"""The longest OAEP label, in octets, that a received identifier may carry (fail-closed; the label is hashed)."""
 
-def get_rsa_oaep_padding(param: rfc4055.RSAES_OAEP_params) -> padding.OAEP:
-    """Return a :class:`padding.OAEP` instance configured from an ASN.1 ``RSAES_OAEP_params``.
+# The hash functions of RFC 4055 Section 2.1 (RFC 8017 Appendix B.1 lists these five and SHA-512/224 and SHA-512/256).
+_OAEP_HASHES = ("sha1", "sha224", "sha256", "sha384", "sha512")
 
-    :param param: Decoded ``RSAES_OAEP_params`` structure.
-    :raises BadAsn1Data: If the MGF1 parameter encoding is malformed.
-    :raises NotImplementedError: If ``pSourceFunc`` is present (unsupported).
+
+@dataclass(frozen=True)
+class _OaepParameters:
+    """The fields of ``RSAES-OAEP-params`` (RFC 4055 Section 4.1) after the checks and the DEFAULTs."""
+
+    hash: str
+    mgf1_hash: str
+    label: bytes
+
+
+def _der_of(parameters: Any) -> bytes:
+    """Return the DER of the ``parameters`` field of an ``AlgorithmIdentifier``, which holds DER or a decoded object."""
+    return parameters.asOctets() if isinstance(parameters, univ.Any) else encode_to_der(parameters)
+
+
+def _oaep_hash(hash_alg_id: Any, what: str) -> str:
+    """Return the name of the hash of an ``AlgorithmIdentifier`` inside RSAES-OAEP-params.
+
+    :raises BadAlg: If the OID is no SHA-1 or SHA-2 hash.
+    :raises BadAlgParams: If the parameters are neither absent nor NULL (RFC 4055 Section 2.1: both are legal).
     """
-    hash_name = get_hash_from_oid(param["hashFunc"]["algorithm"])
-    if hash_name is None:
-        raise BadAsn1Data("Unknown hash OID in RSAES_OAEP_params hashFunc")
-    hash_fun = hash_name_to_instance(hash_name)
-    raw_mgf_params = param["maskGenFunc"]["parameters"]
-    oid, rest = try_decode_pyasn1(raw_mgf_params, univ.ObjectIdentifier())
-    if rest != b"":
-        raise BadAsn1Data("MGF1 parameters")
-    mgf_hash_name = get_hash_from_oid(oid)
-    if mgf_hash_name is None:
-        raise BadAsn1Data("Unknown hash OID in RSAES_OAEP_params maskGenFunc")
-    mgf_hash = hash_name_to_instance(mgf_hash_name)
-    if param["pSourceFunc"].isValue:
-        raise NotImplementedError("pSourceFunc is not supported")
-    return padding.OAEP(mgf=padding.MGF1(algorithm=mgf_hash), algorithm=hash_fun, label=None)
+    name = _HASH_OID_2_NAME.get(hash_alg_id["algorithm"])
+    if name not in _OAEP_HASHES:
+        raise BadAlg(f"{hash_alg_id['algorithm']} is not a hash of {what}: RFC 4055 Section 2.1 has SHA-1 and SHA-2.")
+    parameters = hash_alg_id["parameters"]
+    if parameters.isValue and not _is_parameters_null(parameters):
+        raise BadAlgParams(f"The parameters of the hash of {what} must be absent or NULL.")
+    return name
 
 
-def _resolve_rsa_key_transport_padding(alg_id: rfc9480.AlgorithmIdentifier) -> padding.AsymmetricPadding:
-    """Return the cryptography padding instance described by an RSA key-transport ``alg_id``.
+def _oaep_mgf1_hash(mask_gen: Any) -> str:
+    """Return the hash of the ``maskGenFunc`` of RSAES-OAEP-params, which must be MGF1 over an identifier of a hash.
 
-    :param alg_id: Key-encryption ``AlgorithmIdentifier``.
-    :raises BadAlg: If the OID is not ``rsaEncryption`` or ``id-RSAES-OAEP``.
-    :raises BadAsn1Data: If the ``RSAES_OAEP_params`` cannot be decoded.
-    :raises ValueError: If the ``rsaEncryption`` parameters field is not absent/NULL.
+    :raises BadAlg: If the function is not id-mgf1, or the hash is no SHA-1 or SHA-2 hash.
+    :raises BadAlgParams: If the parameters are absent, are the bare OID of a hash (which the callers of this package
+        wrote before; RFC 4055 Section 2.2 says an ``AlgorithmIdentifier``), or have data after them.
+    :raises BadAsn1Data: If the parameters do not decode.
     """
-    oid = alg_id["algorithm"]
-
-    if oid == rfc9481.rsaEncryption:
-        params = alg_id["parameters"]
-        params_absent = (
-            not params.isValue
-            or isinstance(params, univ.Null)
-            or (hasattr(params, "asOctets") and params.asOctets() == b"\x05\x00")
+    if mask_gen["algorithm"] != rfc4055.id_mgf1:
+        raise BadAlg(f"{mask_gen['algorithm']} is not id-mgf1, the only mask generation function of RFC 4055.")
+    if not mask_gen["parameters"].isValue:
+        raise BadAlgParams("The parameters of id-mgf1 are the AlgorithmIdentifier of a hash (RFC 4055 Section 2.2).")
+    der = _der_of(mask_gen["parameters"])
+    if der[:1] == b"\x06":
+        raise BadAlgParams(
+            "The parameters of id-mgf1 are a bare OID; RFC 4055 Section 2.2 wants an AlgorithmIdentifier."
         )
-        if not params_absent:
-            raise ValueError(
-                "The `parameters` field must be absent or NULL for `rsaEncryption` key transport. "
-                f"Got: {params.prettyPrint()}"
-            )
+    hash_alg_id, rest = try_decode_pyasn1(der, rfc9480.AlgorithmIdentifier())
+    if rest:
+        raise BadAlgParams("The parameters of id-mgf1 have trailing data.")
+    return _oaep_hash(hash_alg_id, "id-mgf1")
+
+
+def _oaep_label(p_source: Any) -> bytes:
+    """Return the label of the ``pSourceFunc`` of RSAES-OAEP-params.
+
+    :raises BadAlg: If the function is not id-pSpecified.
+    :raises BadAlgParams: If the label is absent, has trailing data, or is longer than ``MAX_OAEP_LABEL_LENGTH``.
+    :raises BadAsn1Data: If the label does not decode as an OCTET STRING.
+    """
+    if p_source["algorithm"] != rfc4055.id_pSpecified:
+        raise BadAlg(f"{p_source['algorithm']} is not id-pSpecified, the only source of the label (RFC 4055).")
+    if not p_source["parameters"].isValue:
+        raise BadAlgParams("The parameters of id-pSpecified are the label, an OCTET STRING (RFC 4055 Section 4.1).")
+    label, rest = try_decode_pyasn1(_der_of(p_source["parameters"]), univ.OctetString())
+    if rest:
+        raise BadAlgParams("The label of id-pSpecified has trailing data.")
+    if len(label) > MAX_OAEP_LABEL_LENGTH:
+        raise BadAlgParams(f"The OAEP label has {len(label)} octets, more than the limit of {MAX_OAEP_LABEL_LENGTH}.")
+    return label.asOctets()
+
+
+def _read_oaep_parameters(alg_id: rfc9480.AlgorithmIdentifier) -> _OaepParameters:
+    """Read the ``RSAES-OAEP-params`` of an id-RSAES-OAEP identifier in the form of RFC 4055.
+
+    Absent ``hashFunc`` and ``maskGenFunc`` are SHA-1 and an absent ``pSourceFunc`` is the empty label (the DEFAULTs of
+    RFC 4055 Section 4.1). The parameters themselves must be present: the SEQUENCE, empty for the defaults.
+
+    :raises BadAlg: If a hash is no SHA-1 or SHA-2 hash, the mask generation function is not MGF1 or the label source
+        is not id-pSpecified.
+    :raises BadAlgParams: If the parameters are absent, have trailing data, or a field is wrong (see the helpers).
+    :raises BadAsn1Data: If the parameters do not decode.
+    """
+    if not alg_id["parameters"].isValue:
+        raise BadAlgParams("The parameters of id-RSAES-OAEP are the RSAES-OAEP-params SEQUENCE (RFC 4055 Section 4.1).")
+    params, rest = try_decode_pyasn1(_der_of(alg_id["parameters"]), rfc4055.RSAES_OAEP_params())
+    if rest:
+        raise BadAlgParams("The parameters of id-RSAES-OAEP have trailing data.")
+    hash_func, mask_gen, p_source = params["hashFunc"], params["maskGenFunc"], params["pSourceFunc"]
+    return _OaepParameters(
+        hash=_oaep_hash(hash_func, "RSAES-OAEP") if hash_func.isValue else "sha1",
+        mgf1_hash=_oaep_mgf1_hash(mask_gen) if mask_gen.isValue else "sha1",
+        label=_oaep_label(p_source) if p_source.isValue else b"",
+    )
+
+
+def _resolve_rsa_key_transport_padding(
+    alg_id: rfc9480.AlgorithmIdentifier, *, allow_sha1: bool
+) -> padding.AsymmetricPadding:
+    """Return the padding that an RSA key transport identifier names.
+
+    :raises TypeError: If ``alg_id`` is no ``AlgorithmIdentifier``.
+    :raises BadAlg: If the OID is not ``rsaEncryption`` or ``id-RSAES-OAEP``, or the OAEP parameters name SHA-1 (as the
+        hash, as the MGF1 hash, or by leaving the field out) and ``allow_sha1`` is false.
+    :raises BadAlgParams: If the parameters are wrong for the OID.
+    :raises BadAsn1Data: If the ``RSAES-OAEP-params`` cannot be decoded.
+    """
+    if not isinstance(alg_id, univ.Sequence):
+        raise TypeError(f"The key transport algorithm must be an AlgorithmIdentifier, not {type(alg_id).__name__}.")
+    row = KT_BY_OID.get(alg_id["algorithm"]) if alg_id["algorithm"].isValue else None
+    if row is None:
+        raise BadAlg(f"Unsupported key-transport OID: {alg_id['algorithm']}. Only `rsaEncryption` and `id-RSAES-OAEP`.")
+    if row.padding == "pkcs1v15":
+        parameters = alg_id["parameters"]
+        if parameters.isValue and not _is_parameters_null(parameters):
+            raise BadAlgParams("The parameters of `rsaEncryption` must be absent or NULL (RFC 3370 Section 4.2.1).")
         return padding.PKCS1v15()
-
-    if oid == rfc4055.id_RSAES_OAEP:
-        param, rest = try_decode_pyasn1(alg_id["parameters"], rfc4055.RSAES_OAEP_params())
-        if rest != b"":
-            raise BadAsn1Data("RSAES_OAEP_params")
-        return get_rsa_oaep_padding(param)
-
-    raise BadAlg(f"Unsupported key-transport OID: {oid}. Only `rsaEncryption` and `id-RSAES-OAEP` are allowed.")
+    oaep = _read_oaep_parameters(alg_id)
+    if not allow_sha1 and "sha1" in (oaep.hash, oaep.mgf1_hash):
+        raise BadAlg("RSAES-OAEP over SHA-1 is refused unless the caller passes `allow_sha1=True`.")
+    return padding.OAEP(
+        mgf=padding.MGF1(hash_name_to_instance(oaep.mgf1_hash)),
+        algorithm=hash_name_to_instance(oaep.hash),
+        label=oaep.label or None,
+    )
 
 
 def decrypt_data_with_public_key_alg_id(
     private_key: rsa.RSAPrivateKey,
     alg_id: rfc9480.AlgorithmIdentifier,
     ciphertext: bytes,
+    *,
+    allow_sha1: bool = False,
 ) -> bytes:
-    """Decrypt *ciphertext* using the RSA key-transport algorithm specified by *alg_id*.
+    """Decrypt ``ciphertext`` with the RSA key transport algorithm that ``alg_id`` names.
 
-    Supported OIDs:
+    * ``rsaEncryption`` (RSAES-PKCS1-v1_5): the parameters are absent or NULL.
+    * ``id-RSAES-OAEP``: the parameters are ``RSAES-OAEP-params`` in the form of RFC 4055 Section 4.1: the hash and
+      the MGF1 hash as ``AlgorithmIdentifier`` values with NULL or no parameters (SHA-1 or SHA-2), the label as
+      id-pSpecified. A field that is absent is its DEFAULT, SHA-1 or the empty label. The old form of this package,
+      a bare hash OID as the parameter of id-mgf1, is :class:`~keyutils_py.exceptions.BadAlgParams`.
 
-    * ``rsaEncryption`` (1.2.840.113549.1.1.1) — PKCS#1 v1.5 padding.
-      The ``parameters`` field must be absent or NULL.
-    * ``id-RSAES-OAEP`` (1.2.840.113549.1.1.7) — RSA-OAEP padding.
-      The ``parameters`` field must be a DER-encoded ``RSAES_OAEP_params``.
+    Opening is a trust decision, so OAEP over SHA-1, including by the defaults of absent fields, is refused unless
+    ``allow_sha1`` is true, as in :func:`verify_signature_with_alg_id`. The identifier is read before the key is used.
+
+    A failed decryption is one error whatever the cause (a wrong key, a changed or short ciphertext, a wrong label,
+    bad padding): no detail that a padding oracle could use. RSAES-PKCS1-v1_5 under OpenSSL 3.2 and later does not
+    always fail: it may return a pseudorandom plaintext for an invalid ciphertext (implicit rejection), which the
+    caller finds out when the key it carries does not unwrap or decrypt.
 
     :param private_key: Recipient RSA private key.
     :param alg_id: Key-encryption ``AlgorithmIdentifier``.
     :param ciphertext: Encrypted bytes to decrypt.
-    :raises BadAlg: If the OID is not ``rsaEncryption`` or ``id-RSAES-OAEP``.
-    :raises BadAsn1Data: If the ``RSAES_OAEP_params`` cannot be decoded.
-    :raises ValueError: If the ``rsaEncryption`` parameters field is not absent/NULL.
+    :param allow_sha1: Accept RSAES-OAEP over SHA-1.
+    :raises TypeError: If ``alg_id`` is no ``AlgorithmIdentifier``.
+    :raises InvalidKeyCombination: If ``private_key`` is no RSA private key.
+    :raises BadAlg: If the OID is not ``rsaEncryption`` or ``id-RSAES-OAEP``, an OAEP hash is no SHA-1 or SHA-2 hash,
+        the mask generation function is not MGF1, the label source is not id-pSpecified, or OAEP names SHA-1 without
+        ``allow_sha1``.
+    :raises BadAlgParams: If the parameters are absent, wrong or inconsistent for the OID.
+    :raises BadAsn1Data: If the ``RSAES-OAEP-params`` cannot be decoded.
+    :raises IntegrityError: If the decryption fails.
     """
-    return private_key.decrypt(ciphertext, _resolve_rsa_key_transport_padding(alg_id))
+    key_padding = _resolve_rsa_key_transport_padding(alg_id, allow_sha1=allow_sha1)
+    if not isinstance(private_key, rsa.RSAPrivateKey):
+        raise InvalidKeyCombination(f"RSA key transport needs an RSA private key, not {type(private_key).__name__}.")
+    try:
+        return private_key.decrypt(ciphertext, key_padding)
+    except ValueError:
+        raise IntegrityError("RSA key transport decryption failed.") from None
 
 
 def encrypt_data_with_public_key_alg_id(
@@ -661,23 +761,26 @@ def encrypt_data_with_public_key_alg_id(
     alg_id: rfc9480.AlgorithmIdentifier,
     data: bytes,
 ) -> bytes:
-    """Encrypt *data* using the RSA key-transport algorithm specified by *alg_id*.
+    """Encrypt ``data`` with the RSA key transport algorithm that ``alg_id`` names.
 
-    Inverse of :func:`decrypt_data_with_public_key_alg_id`. Supported OIDs:
-
-    * ``rsaEncryption`` (1.2.840.113549.1.1.1) — PKCS#1 v1.5 padding.
-      The ``parameters`` field must be absent or NULL.
-    * ``id-RSAES-OAEP`` (1.2.840.113549.1.1.7) — RSA-OAEP padding.
-      The ``parameters`` field must be a DER-encoded ``RSAES_OAEP_params``.
+    The inverse of :func:`decrypt_data_with_public_key_alg_id`, with the same reading of ``alg_id``; encryption is not
+    restricted, so OAEP over SHA-1 can be produced. ``keyutils_py.make_alg_id("key_transport", ...)`` writes the
+    identifier.
 
     :param public_key: Recipient RSA public key.
     :param alg_id: Key-encryption ``AlgorithmIdentifier``.
     :param data: Plaintext to encrypt (typically a content-encryption key).
-    :raises BadAlg: If the OID is not ``rsaEncryption`` or ``id-RSAES-OAEP``.
-    :raises BadAsn1Data: If the ``RSAES_OAEP_params`` cannot be decoded.
-    :raises ValueError: If the ``rsaEncryption`` parameters field is not absent/NULL.
+    :raises TypeError: If ``alg_id`` is no ``AlgorithmIdentifier``.
+    :raises InvalidKeyCombination: If ``public_key`` is no RSA public key.
+    :raises BadAlg: As :func:`decrypt_data_with_public_key_alg_id`, except for SHA-1.
+    :raises BadAlgParams: As :func:`decrypt_data_with_public_key_alg_id`.
+    :raises BadAsn1Data: As :func:`decrypt_data_with_public_key_alg_id`.
+    :raises ValueError: If ``data`` is too long for the key and the padding.
     """
-    return public_key.encrypt(data, _resolve_rsa_key_transport_padding(alg_id))
+    key_padding = _resolve_rsa_key_transport_padding(alg_id, allow_sha1=True)
+    if not isinstance(public_key, rsa.RSAPublicKey):
+        raise InvalidKeyCombination(f"RSA key transport needs an RSA public key, not {type(public_key).__name__}.")
+    return public_key.encrypt(data, key_padding)
 
 
 # ---------------------------------------------------------------------------
@@ -779,5 +882,4 @@ __all__ = [
     "compute_ecdh",
     "encrypt_data_with_public_key_alg_id",
     "decrypt_data_with_public_key_alg_id",
-    "get_rsa_oaep_padding",
 ]
