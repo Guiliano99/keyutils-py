@@ -138,7 +138,7 @@ SPDX-License-Identifier: Apache-2.0 -->
   `kdf3`, `pbkdf2`), MAC (`hmac`, `kmac`, `gmac`, `pbmac1`), AES key wrap (`aes`, mode `kw` or `kwp`) or AES content
   encryption (`aes-cbc`, `aes-gcm`), one builder per family with the parameters as the RFCs write them (the DER of the
   identifiers of RFC 9690 Appendix D.2 is reproduced). An unknown keyword or a missing one is a `TypeError`, an unknown
-  kind, family, hash, size or mode `BadAlg`; the kinds `kari` and `key_transport` have no builder yet and are `BadAlg`.
+  kind, family, hash, size or mode `BadAlg`; the kind `kari` has no builder yet and is `BadAlg`.
   A builder writes what it is asked for and checks no size, so a test can build what a receiver refuses.
   `list_algorithms` lists the kinds `kdf` (10 rows), `mac` (16), `wrap` (6) and `content` (6) as
   `AlgInfo(kind, family, params, oid)`, sorted by OID, `params` being keywords that `make_alg_id` takes.
@@ -147,6 +147,19 @@ SPDX-License-Identifier: Apache-2.0 -->
   `BadAlgParams` and `IntegrityError`. They are in `keyutils_py.mechanisms` (the functions and types),
   `keyutils_py.algorithms` and `keyutils_py.exceptions`. `tests/golden/public_api.tsv` and `tests/test_public_api.py`
   pin the names and the signatures. `keyutils_py.primitives` is not exported.
+- `make_alg_id("key_transport", "rsa-oaep", hash=..., mgf1_hash=None, label=b"")` writes RSAES-OAEP-params as RFC 4055
+  Section 4.1 does: `hashFunc` and `maskGenFunc` as `AlgorithmIdentifier` values with NULL parameters, the parameter of
+  `id-mgf1` the `AlgorithmIdentifier` of its hash (RFC 4055 Section 2.2), `pSourceFunc` as `id-pSpecified` with the
+  label, and a field that equals its DEFAULT (SHA-1, the empty label) left out, so SHA-1 alone is an empty SEQUENCE. The
+  bytes equal the identifiers that the ASN.1 module of RFC 4055 builds. `("key_transport", "rsa-pkcs1v15")` writes
+  `rsaEncryption` with NULL. SHA-1 and SHA-2 only; another hash is `BadAlg`.
+- `decrypt_data_with_public_key_alg_id(private_key, alg_id, ciphertext, *, allow_sha1=False)` and
+  `encrypt_data_with_public_key_alg_id` read the identifier from the key transport row (`rsaEncryption`, `id-RSAES-OAEP`).
+  OAEP parameters are read in the RFC 4055 form: the hash identifiers with NULL or no parameters, absent fields are the
+  DEFAULTs of Section 4.1 (SHA-1, empty label), `pSourceFunc` must be `id-pSpecified` (another OID is `BadAlg`), the
+  label is at most `keyutils_py.compute.MAX_OAEP_LABEL_LENGTH` (4096) octets, and the parameters themselves must be
+  present (the empty SEQUENCE for all defaults). Verified against `openssl cms -encrypt` files (OAEP with SHA-1, SHA-256,
+  SHA-384 with an MGF1 over SHA-256, and PKCS#1 v1.5) and against `cryptography`'s own OAEP with labels.
 
 ## Changed
 
@@ -191,6 +204,19 @@ SPDX-License-Identifier: Apache-2.0 -->
     keys are signed with PKCS#1 v1.5 (was `NotImplementedError`).
   - `prepare_sig_alg_id(key, hash_alg=None, use_rsa_pss=False)`: the default is `None`, which is still `sha256` for
     RSA, ECDSA and DSA (same bytes), and an SLH-DSA key without a hash now gets the pure OID.
+- Breaking for consumers of `encrypt_data_with_public_key_alg_id` and `decrypt_data_with_public_key_alg_id` that pin
+  an older commit (nothing changes until they bump):
+  - OAEP parameters in the old bytes, a bare hash OID as the parameter of `id-mgf1` (what `get_rsa_oaep_padding` and
+    the callers of this package wrote), are `BadAlgParams`; the RFC 4055 form that they refused (an `AlgorithmIdentifier`
+    as the parameter of `id-mgf1`, hashes with or without NULL, a label) is read. Absent OAEP parameters are
+    `BadAlgParams` (they were a `PyAsn1Error`), a `pSourceFunc` other than `id-pSpecified` is `BadAlg` (a non-empty label
+    was `NotImplementedError`), `rsaEncryption` with other parameters than absent or NULL is `BadAlgParams` (was
+    `ValueError`).
+  - Decryption of OAEP over SHA-1, also by the DEFAULT of an absent `hashFunc` or `maskGenFunc`, is `BadAlg` unless the
+    caller passes `allow_sha1=True`.
+  - A failed decryption is `IntegrityError` with one message (was `ValueError`); a key that is no RSA key is
+    `InvalidKeyCombination` (was an `AttributeError`).
+  - `get_rsa_oaep_padding` is removed from `keyutils_py.compute` and from `keyutils_py.__all__`: it read the old form.
 - `SIG_ALG_OID_2_PARAMETERS_SPEC` is derived from the signature algorithm table and has the 81 entries of its rows.
 - The private `compute._validate_sig_alg_id`, `compute._resolve_sig_alg_name`, `compute._check_eddsa_oid_matches_key` and
   `keyutils._check_trad_sig_alg_id` are gone; their checks are in `get_sig_alg_info` and `compute._check_key_matches`.

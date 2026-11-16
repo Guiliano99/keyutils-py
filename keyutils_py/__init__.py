@@ -36,7 +36,6 @@ Public top-level surface (most callers stop here)::
         compute_encaps,
         compute_decaps,  # compute
         compute_ecdh,  # compute
-        get_rsa_oaep_padding,  # compute
         encrypt_data_with_public_key_alg_id,  # compute
         decrypt_data_with_public_key_alg_id,  # compute
         get_key_name,  # keyutils
@@ -83,7 +82,6 @@ from keyutils_py.compute import (
     compute_encaps,
     decrypt_data_with_public_key_alg_id,
     encrypt_data_with_public_key_alg_id,
-    get_rsa_oaep_padding,
     sign_data,
     sign_with_alg_id,
     verify_signature,
@@ -178,7 +176,6 @@ __all__ = [
     "compute_decaps",
     "compute_ecdh",
     # RSA key transport
-    "get_rsa_oaep_padding",
     "encrypt_data_with_public_key_alg_id",
     "decrypt_data_with_public_key_alg_id",
     # AlgorithmIdentifier builders and hashes

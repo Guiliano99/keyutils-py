@@ -16,7 +16,9 @@ from keyutils_py import algorithms
 
 GOLDEN = Path(__file__).with_name("golden") / "public_api.tsv"
 
-# The names that the package had before the signature algorithm table: none of them may go away.
+# The names that the package had before the signature algorithm table: none of them may go away. One went on purpose:
+# get_rsa_oaep_padding read the parameters of RSAES-OAEP in a form that RFC 4055 Section 2.2 does not allow, and the
+# key transport functions read the identifier themselves.
 _NAMES_OF_THE_FIRST_RELEASE = frozenset(
     {
         "MissingOQSDependencyError",
@@ -29,7 +31,6 @@ _NAMES_OF_THE_FIRST_RELEASE = frozenset(
         "estimate_key_security_strength",
         "generate_key",
         "get_key_name",
-        "get_rsa_oaep_padding",
         "load_private_key_from_file",
         "load_private_key_from_one_asym_key",
         "load_public_key_from_file",
