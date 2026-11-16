@@ -7,6 +7,11 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 ## Added
 
+- `keyutils_py.cms_algs.cms_digest_algs(key_name, signed_attrs)` returns the digests that a CMS SignerInfo of a key
+  may name, the default first: the one digest of EdDSA (RFC 8419), the digests of ML-DSA (RFC 9882 Table 1 and
+  Section 3.3) and of SLH-DSA (RFC 9814 Section 4) as the hashes with at least twice the bits of the security level.
+  `PURE_PQ_SIG_NAME_2_OID` holds the identifiers of the pure modes by key name. A CMS library no longer keeps a table
+  of its own for either.
 - `keyutils_py.types` now exports every concrete key class (`MLDSAPrivateKey`,
   `CompositeSigPrivateKey`, `ChempatPrivateKey`, ...) next to the key aliases, so a
   consumer imports key types from this one module instead of from `keyutils_py.keys.*`.
