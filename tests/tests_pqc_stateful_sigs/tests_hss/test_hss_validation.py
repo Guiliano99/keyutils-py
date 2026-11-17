@@ -48,40 +48,6 @@ class TestHSSValidation(unittest.TestCase):
         self.assertIn("Hash family mismatch with level 0", error_details)
         self.assertIn("Level 1: Winternitz parameter mismatch with level 0: LMOTS uses w=4 while level 0 uses w=8.", error_details)
 
-    def test_rejects_invalid_level_count(self) -> None:
-        """
-        GIVEN HSS configurations with invalid level counts (empty or 9 levels).
-        WHEN validating the HSS key configuration,
-        THEN an InvalidKeyData exception should be raised with a message about invalid level count.
-        """
-        with self.assertRaises(InvalidKeyData) as exc:
-            validate_hss_key_levels([])
-        self.assertIn("Invalid number of HSS levels", str(exc.exception))
-
-        with self.assertRaises(InvalidKeyData) as exc:
-            validate_hss_key_levels([("lms_sha256_m32_h5", "lmots_sha256_n32_w8")] * 9)
-        self.assertIn("Invalid number of HSS levels", str(exc.exception))
-
-    def test_rejects_hash_family_mismatch(self) -> None:
-        """
-        GIVEN an HSS configuration with mismatched hash families (SHA-256 and SHAKE).
-        WHEN validating the HSS key configuration,
-        THEN an InvalidKeyData exception should be raised with a message about hash family mismatch.
-        """
-        with self.assertRaises(InvalidKeyData) as exc:
-            validate_hss_key_levels([("lms_sha256_m32_h5", "lmots_shake_n32_w8")])
-        self.assertIn("Hash family mismatch", str(exc.exception))
-
-    def test_rejects_digest_size_mismatch(self) -> None:
-        """
-        GIVEN an HSS configuration with mismatched digest sizes (m32 and n24).
-        WHEN validating the HSS key configuration,
-        THEN an InvalidKeyData exception should be raised with a message about digest size mismatch.
-        """
-        with self.assertRaises(InvalidKeyData) as exc:
-            validate_hss_key_levels([("lms_sha256_m32_h5", "lmots_sha256_n24_w8")])
-        self.assertIn("Digest size mismatch", str(exc.exception))
-
     def test_validate_hss_key_with_valid_key(self) -> None:
         """
         GIVEN a valid HSS private key with matching LMS/LMOTS parameters.

@@ -9,7 +9,7 @@
 
 """Factory for hybrid (composite / chempat / xwing) keys."""
 
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, x448, x25519
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
@@ -19,11 +19,12 @@ from cryptography.hazmat.primitives.serialization import (
     load_der_public_key,
 )
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc3370, rfc5280, rfc5958
+from pyasn1_alt_modules import rfc3370, rfc5280, rfc5915, rfc5958, rfc8017
 
 from keyutils_py.enums import KeySaveType
 from keyutils_py.exceptions import (
     BadAlg,
+    BadAsn1Data,
     BadSigAlgIDParams,
     InvalidKeyCombination,
     InvalidKeyData,
@@ -81,8 +82,6 @@ class HybridKeyFactory(AbstractKeyFactory):
         {"pq_name": "ml-kem-1024", "trad_name": "ecdh", "curve": "brainpoolP384r1"},
         {"pq_name": "frodokem-976-aes", "trad_name": "x25519"},
         {"pq_name": "frodokem-976-shake", "trad_name": "x25519"},
-        {"pq_name": "frodokem-640-aes", "trad_name": "ecdh", "curve": "brainpoolp256r1"},
-        {"pq_name": "frodokem-640-shake", "trad_name": "ecdh", "curve": "brainpoolp256r1"},
         {"pq_name": "frodokem-976-aes", "trad_name": "ecdh", "curve": "brainpoolp384r1"},
         {"pq_name": "frodokem-976-shake", "trad_name": "ecdh", "curve": "brainpoolp384r1"},
         {"pq_name": "frodokem-1344-aes", "trad_name": "ecdh", "curve": "brainpoolp512r1"},
@@ -184,7 +183,24 @@ class HybridKeyFactory(AbstractKeyFactory):
         return key_class_mappings[hybrid_type](pq_key, trad_key)
 
     @staticmethod
-    def _get_pq_and_trad_name(hybrid_name: str) -> Tuple[str, str]:
+    def get_all_kem_coms_as_dict() -> Dict[str, List[dict]]:
+        """Return all hybrid KEM key combinations (composite KEM and Chempat) by family name.
+
+        Enables displaying all possible combinations, or generating keys in all valid combinations.
+        """
+        return {
+            "composite-kem": HybridKeyFactory._COMPOSITE_KEM_COMBINATIONS,
+            "chempat": HybridKeyFactory._CHEMPAT_COMBINATIONS,
+        }
+
+    @staticmethod
+    def get_pq_and_trad_name(hybrid_name: str) -> Tuple[str, str]:
+        """Split a hybrid algorithm name (Composite or Chempat) into its PQ and traditional part.
+
+        :param hybrid_name: The hybrid algorithm name, e.g. ``composite-sig-ml-dsa-44-ed25519``.
+        :return: Tuple of (pq_name, trad_name).
+        :raises NotImplementedError: If the algorithm name format is not recognized.
+        """
         alg = hybrid_name.lower()
         if alg.startswith("chempat-"):
             prefix = "chempat-"
@@ -294,9 +310,6 @@ class HybridKeyFactory(AbstractKeyFactory):
 
         valid_combinations = HybridKeyFactory.hybrid_mappings[hybrid_type]
 
-        if hybrid_type == "kem" and pq_name in ["frodokem-aes-640", "frodokem-shake-640"]:
-            raise InvalidKeyCombination("FrodoKEM-640 is not supported (the claimed NIST level is only `1`).")
-
         params = HybridKeyFactory._get_valid_hybrid_combination(
             valid_combinations,
             algorithm=algorithm,
@@ -362,7 +375,18 @@ class HybridKeyFactory(AbstractKeyFactory):
 
     @staticmethod
     def _try_load_ec_private_from_der(trad_key_bytes: bytes, curve_name: Optional[str] = None):
-        """Load an EC private key from DER-encoded ECPrivateKey."""
+        """Load an EC private key from a DER-encoded ``ECPrivateKey``.
+
+        :raises ValueError: If the curve name is not supported.
+        :raises InvalidKeyData: If the data has a remainder, is not an EC key, or is on another curve.
+        """
+        if curve_name is not None and CURVE_NAMES_TO_INSTANCES.get(curve_name) is None:
+            raise ValueError(f"Unsupported EC curve: {curve_name}")
+
+        _, rest = try_decode_pyasn1(trad_key_bytes, rfc5915.ECPrivateKey())
+        if rest:
+            raise InvalidKeyData(f"Unexpected EC private key data: {rest.hex()}")
+
         key = load_der_private_key(trad_key_bytes, password=None)
         if not isinstance(key, EllipticCurvePrivateKey):
             raise InvalidKeyData(f"Expected EC private key, got {type(key)}")
@@ -372,28 +396,49 @@ class HybridKeyFactory(AbstractKeyFactory):
 
     @staticmethod
     def _load_trad_composite_private_key(trad_name: str, trad_key_bytes: bytes, prefix: str = "Sig"):
-        """Load a traditional key for composite sig/kem from raw/DER bytes."""
+        """Load a traditional key for composite sig/kem from raw/DER bytes.
+
+        :raises InvalidKeyData: If the key data is malformed, has a remainder or does not match ``trad_name``.
+        """
         try:
             if trad_name.startswith("ecdsa") or trad_name.startswith("ecdh"):
                 curve_name = trad_name.replace("ecdsa-", "").replace("ecdh-", "")
                 return HybridKeyFactory._try_load_ec_private_from_der(trad_key_bytes, curve_name)
             if trad_name in ["ed448", "ed25519", "x25519", "x448"]:
                 return HybridKeyFactory._load_trad_raw_key(trad_name, trad_key_bytes)
-            if trad_name.startswith("rsa"):
-                trad_key = load_der_private_key(trad_key_bytes, password=None)
-                if not isinstance(trad_key, RSAPrivateKey):
-                    raise InvalidKeyData(f"Expected RSA private key, got {type(trad_key)}")
-                return trad_key
-            raise ValueError(f"Unsupported trad key type for composite {prefix}: {trad_name!r}")
-        except (ValueError, InvalidKeyData):
-            raise
-        except Exception as exc:
-            raise InvalidKeyData(f"Failed to load composite {prefix} traditional key ({trad_name!r}): {exc}") from exc
+            if not trad_name.startswith("rsa"):
+                raise ValueError(
+                    f"Unsupported traditional key type: {trad_name}. Expected RSA, ECDH, ECDSA, or EdDSA key."
+                )
+
+            _, rest = try_decode_pyasn1(trad_key_bytes, rfc8017.RSAPrivateKey())
+            if rest:
+                raise InvalidKeyData(
+                    f"Found trailing data for composite {prefix} traditional private key data. "
+                    f"For {trad_name}: {rest.hex()}"
+                )
+
+            trad_key = load_der_private_key(trad_key_bytes, password=None)
+            if not isinstance(trad_key, RSAPrivateKey):
+                raise InvalidKeyData(f"Expected RSA private key for {trad_name}, got: {type(trad_key)}")
+
+            size = int(trad_name.replace("-pss", "").replace("rsa", ""))
+            if size != trad_key.key_size:
+                raise InvalidKeyData(f"Expected RSA key size {size}, but got {trad_key.key_size} for {trad_name}.")
+            return trad_key
+        except BadAsn1Data as exc:
+            raise InvalidKeyData(
+                f"Failed to load traditional Composite {prefix} private key: {trad_name}. {exc.message}"
+            ) from exc
+        except ValueError as exc:
+            raise InvalidKeyData(
+                f"Failed to load traditional Composite {prefix} private key: {trad_name}. {exc}"
+            ) from exc
 
     @staticmethod
     def _load_composite_sig_from_private_bytes(algorithm: str, private_bytes: bytes) -> CompositeSigPrivateKey:
         """Load a CompositeSigPrivateKey from serialised private bytes."""
-        pq_name, trad_name = HybridKeyFactory._get_pq_and_trad_name(algorithm)
+        pq_name, trad_name = HybridKeyFactory.get_pq_and_trad_name(algorithm)
         seed_size = 32
         pq_bytes, trad_bytes = private_bytes[:seed_size], private_bytes[seed_size:]
         pq_key = MLDSAPrivateKey.from_private_bytes(pq_bytes, name=pq_name)
@@ -403,7 +448,7 @@ class HybridKeyFactory(AbstractKeyFactory):
     @staticmethod
     def _load_composite_kem_from_private_bytes(algorithm: str, private_bytes: bytes) -> CompositeKEMPrivateKey:
         """Load a CompositeKEMPrivateKey from serialised private bytes."""
-        pq_name, trad_name = HybridKeyFactory._get_pq_and_trad_name(algorithm)
+        pq_name, trad_name = HybridKeyFactory.get_pq_and_trad_name(algorithm)
         tmp_pq_key = PQKeyFactory.generate_pq_key(pq_name)
         if hasattr(tmp_pq_key, "private_numbers"):
             seed_size = len(tmp_pq_key.private_numbers())  # type: ignore[attr-defined]
@@ -448,10 +493,12 @@ class HybridKeyFactory(AbstractKeyFactory):
             name = COMPOSITE_SIG_OID_TO_NAME[oid]
             private_key = HybridKeyFactory._load_composite_sig_from_private_bytes(name, private_bytes)
             if public_bytes is not None:
-                spki = rfc5280.SubjectPublicKeyInfo()
-                spki["algorithm"]["algorithm"] = oid
-                spki["subjectPublicKey"] = univ.BitString.fromOctetString(public_bytes)
-                pub_key = HybridKeyFactory._load_composite_sig_from_spki(oid, public_bytes)
+                try:
+                    pub_key = HybridKeyFactory._load_composite_sig_from_spki(oid, public_bytes)
+                except (ValueError, InvalidKeyData) as e:
+                    raise InvalidKeyData(
+                        f"Failed to load the public key for composite-sig from `OneAsymmetricKey`: {e}"
+                    ) from e
                 if private_key.public_key() != pub_key:
                     raise MismatchingKey("Composite-sig public key does not match the private key.")
             return private_key
@@ -460,7 +507,12 @@ class HybridKeyFactory(AbstractKeyFactory):
             name = COMPOSITE_KEM_OID_2_NAME[oid]
             private_key = HybridKeyFactory._load_composite_kem_from_private_bytes(name, private_bytes)
             if public_bytes is not None:
-                pub_key = HybridKeyFactory._load_composite_kem_from_spki(oid, public_bytes)
+                try:
+                    pub_key = HybridKeyFactory._load_composite_kem_from_spki(oid, public_bytes)
+                except (ValueError, InvalidKeyData) as e:
+                    raise InvalidKeyData(
+                        f"Failed to load the public key for composite-kem from `OneAsymmetricKey`: {e}"
+                    ) from e
                 if private_key.public_key() != pub_key:
                     raise MismatchingKey("Composite-kem public key does not match the private key.")
             return private_key
@@ -581,7 +633,7 @@ class HybridKeyFactory(AbstractKeyFactory):
     def _load_composite_sig_from_spki(oid: univ.ObjectIdentifier, public_key_bytes: bytes) -> CompositeSigPublicKey:
         """Load a CompositeSigPublicKey from raw public-key bytes + OID."""
         orig_name = COMPOSITE_SIG_OID_TO_NAME[oid]
-        pq_name, trad_name = HybridKeyFactory._get_pq_and_trad_name(orig_name)
+        pq_name, trad_name = HybridKeyFactory.get_pq_and_trad_name(orig_name)
         pq_key, rest = PQKeyFactory.from_public_bytes(pq_name, public_key_bytes, allow_rest=True)
 
         if trad_name == "ed448":
@@ -598,6 +650,9 @@ class HybridKeyFactory(AbstractKeyFactory):
             if rest_dec:
                 raise InvalidKeyData(f"Unexpected composite-sig traditional key data for {orig_name}")
             trad_key = load_der_public_key(rest)
+            size = int(trad_name.replace("-pss", "").replace("rsa", ""))
+            if not isinstance(trad_key, RSAPublicKey) or trad_key.key_size != size:
+                raise InvalidKeyCombination(f"Expected an RSA public key of {size} bits for {orig_name}.")
 
         if not isinstance(pq_key, MLDSAPublicKey):
             raise InvalidKeyData(f"Expected ML-DSA public key for {orig_name}, got: {type(pq_key)}")
@@ -608,7 +663,7 @@ class HybridKeyFactory(AbstractKeyFactory):
     def _load_composite_kem_from_spki(oid: univ.ObjectIdentifier, public_key_bytes: bytes) -> CompositeKEMPublicKey:
         """Load a CompositeKEMPublicKey from raw public-key bytes + OID."""
         orig_name = COMPOSITE_KEM_OID_2_NAME[oid]
-        pq_name, trad_name = HybridKeyFactory._get_pq_and_trad_name(orig_name)
+        pq_name, trad_name = HybridKeyFactory.get_pq_and_trad_name(orig_name)
         pq_key, rest = PQKeyFactory.from_public_bytes(pq_name, public_key_bytes, allow_rest=True)
 
         if trad_name == "x25519":
@@ -625,6 +680,11 @@ class HybridKeyFactory(AbstractKeyFactory):
             trad_key = load_der_public_key(rest)
             if not isinstance(trad_key, RSAPublicKey):
                 raise InvalidKeyCombination(f"Expected RSA public key, got {type(trad_key)}")
+            size = int(trad_name.replace("rsa", ""))
+            if trad_key.key_size != size:
+                raise InvalidKeyCombination(
+                    f"Expected RSA key size {size}, but got {trad_key.key_size} for {trad_name}."
+                )
             trad_key = RSAEncapKey(trad_key)
         else:
             raise ValueError(f"Unsupported traditional key type: {trad_name}")
@@ -716,11 +776,20 @@ class HybridKeyFactory(AbstractKeyFactory):
             curve = rest.lstrip("-") if rest else None
 
         trad_key = TradKeyFactory.generate_trad_key(trad_name, curve=curve, length=length)
-        return HybridKeyFactory.generate_hybrid_key(
+        key = HybridKeyFactory.generate_hybrid_key(
             f"composite-{prefix}",
             pq_key=pq_key,
             trad_key=trad_key,  # type: ignore[arg-type]
         )
+
+        # Verify that an allowed combination was generated: getting the OID raises InvalidKeyCombination if not.
+        # RSA is only allowed as PSS for ML-DSA-87 combinations.
+        pub_key = key.public_key()
+        if isinstance(pub_key, CompositeSigPublicKey) and trad_name.startswith("rsa"):
+            pub_key.get_oid(use_pss=True)
+        else:
+            pub_key.get_oid()
+        return key
 
     @staticmethod
     def _generate_chempat_key_by_name(algorithm: str) -> HybridPrivateKey:
@@ -728,7 +797,7 @@ class HybridKeyFactory(AbstractKeyFactory):
 
         Handles names like ``"chempat-ml-kem-768-x25519"``.
         """
-        pq_name, trad_name_with_curve = HybridKeyFactory._get_pq_and_trad_name(algorithm)
+        pq_name, trad_name_with_curve = HybridKeyFactory.get_pq_and_trad_name(algorithm)
         trad_candidates = ["ecdh", "x448", "x25519"]
         trad_name = next((t for t in trad_candidates if t in trad_name_with_curve), None)
         if trad_name is None:

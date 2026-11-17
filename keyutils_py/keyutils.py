@@ -31,6 +31,7 @@ import base64
 import logging
 import math
 import os
+import re
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
@@ -40,12 +41,15 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 from pyasn1.type import base, univ
 from pyasn1_alt_modules import rfc4055, rfc5280, rfc5480, rfc5958, rfc8017, rfc9480, rfc9481
 
+from keyutils_py.enums import SigAlgParametersSpec
 from keyutils_py.exceptions import (
     BadAlg,
     BadAsn1Data,
+    BadSigAlgID,
     InvalidKeyData,
     MissingOQSDependencyError,
 )
+from keyutils_py.factories.combined_factory import CombinedKeyFactory
 from keyutils_py.factories.hybrid_factory import HybridKeyFactory
 from keyutils_py.factories.pq_factory import PQKeyFactory
 from keyutils_py.factories.pq_stfl_factory import PQStatefulSigFactory
@@ -55,13 +59,12 @@ from keyutils_py.keys.abstract_pq import (
     PQSignaturePrivateKey,
     PQSignaturePublicKey,
 )
-from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey
+from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey
 from keyutils_py.keys.abstract_wrapper_keys import (
     AbstractCompositePrivateKey,
-    HybridPrivateKey,
 )
 from keyutils_py.keys.composite_sig import CompositeSigPrivateKey, CompositeSigPublicKey
-from keyutils_py.keys.key_pyasn1_utils import decrypt_private_key_pkcs8_pem
+from keyutils_py.keys.key_pyasn1_utils import encrypt_private_key_pkcs8_pem, load_enc_key
 from keyutils_py.keys.stateful_sig_keys import (
     HSS_ALGORITHM_DETAILS,
     HSSPrivateKey,
@@ -70,6 +73,7 @@ from keyutils_py.keys.stateful_sig_keys import (
 )
 from keyutils_py.keys.trad_kem_keys import RSAEncapKey
 from keyutils_py.oids import (
+    _SIG_ALG_OID_BY_KEY_HASH,
     ALG_ID_PARAMETERS_OID_2_SPEC,
     COMPOSITE_SIG_OID_TO_NAME,
     ECDSA_OID_2_NAME,
@@ -85,19 +89,21 @@ from keyutils_py.oids import (
     PQ_STATEFUL_HASH_SIG_OID_2_NAME,
     RSA_OID_2_NAME,
     RSASSA_PSS_OID_2_NAME,
+    SIG_ALG_OID_2_INFO,
     SIG_ALG_OID_2_PARAMETERS_SPEC,
     SLH_DSA_NAME_2_OID,
-    TRAD_SIG_NAME_2_OID,
     get_curve_instance,
+    get_sig_alg_info,
     hash_name_to_instance,
     id_rsa_kem_spki,
     may_return_oid_to_name,
     sha_alg_name_to_oid,
 )
-from keyutils_py.types import PrivateKey, PublicKey
+from keyutils_py.types import DSAPrivateKey, PrivateKey, PublicKey, TradPrivateKey
 from keyutils_py.utils import (
-    NOT_IMPLEMENTED_HINT,
     OQS_AVAILABLE,
+    decode_key_structure,
+    decode_pem_string,
     encode_to_der,
     is_stateful_hash_algorithm,
     is_xmss_or_xmssmt,
@@ -115,18 +121,49 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def validate_sig_alg_id(alg_id: rfc9480.AlgorithmIdentifier) -> None:
-    """Validate a signature ``AlgorithmIdentifier`` against the catalog.
+def validate_sig_alg_id(alg_id: rfc9480.AlgorithmIdentifier, *, strict: bool = True) -> None:
+    """Validate a signature ``AlgorithmIdentifier`` against the signature algorithm table.
 
-    Catalog-driven (see :data:`keyutils_py.oids.SIG_ALG_OID_2_PARAMETERS_SPEC`):
-    covers RSA / RSASSA-PSS / ECDSA / EdDSA / PQ / stateful-hash / composite-sig.
+    Reads the row of the OID (:func:`keyutils_py.oids.get_sig_alg_info`) and checks the parameters against it:
+    RSA PKCS#1 v1.5 / RSASSA-PSS / ECDSA / EdDSA / PQ / stateful-hash / composite-sig. For ``id-RSASSA-PSS`` the
+    parameters are decoded and checked (a MGF1 hash that differs from the hash, a trailerField other than 1 and
+    an unknown hash are refused; omitted fields have the DEFAULT values of RFC 4055 Section 3.1).
 
+    :param alg_id: The signature algorithm identifier.
+    :param strict: ``True`` (the default) is the rule for generating an identifier: the PKCS#1 v1.5 identifiers
+        carry NULL, absent parameters are reported. ``False`` is the rule of the verifiers, which also accept
+        absent parameters there (RFC 4055 Section 5, RFC 5754 Section 3.2). A parameter that must be absent is
+        refused in both modes.
     :raises BadSigAlgIDParams: parameters don't match the expected shape.
     :raises BadAlg: OID is not a recognised signature algorithm.
     """
-    from keyutils_py.compute import _validate_sig_alg_id  # pylint: disable=import-outside-toplevel
+    get_sig_alg_info(alg_id, strict=strict)
 
-    _validate_sig_alg_id(alg_id)
+
+def check_consistency_sig_alg_id_and_key(
+    alg_id: rfc9480.AlgorithmIdentifier, key: Union[PrivateKey, PublicKey]
+) -> None:
+    """Check that a signature ``AlgorithmIdentifier`` is consistent with ``key``.
+
+    Reads the row of the OID and asks the same function as :func:`keyutils_py.sign_with_alg_id` and
+    :func:`keyutils_py.verify_signature_with_alg_id` whether the key may be used with it, so the check passes
+    exactly where signing passes. It covers composite, PQ-signature, stateful-hash and traditional keys. An RSA
+    key matches the PKCS#1 v1.5, RSASSA-PSS and ``rsaEncryption`` identifiers (RFC 4055 Section 1.2). The
+    parameters of ``alg_id`` are not looked at (see :func:`validate_sig_alg_id`).
+
+    :raises BadSigAlgID: If the key does not match ``alg_id``, for every family, or the OID is no signature OID.
+    :raises ValueError: If ``key`` is not a key class that :func:`get_key_name` knows.
+    """
+    from keyutils_py.compute import _check_key_matches  # pylint: disable=import-outside-toplevel
+
+    try:
+        info = get_sig_alg_info(alg_id["algorithm"])
+    except BadAlg as exc:
+        raise BadSigAlgID(
+            "The algorithm identifier is not a signature algorithm, so it does not match the key.",
+            error_details=[f"{exc}; key {type(key).__name__}"],
+        ) from exc
+    _check_key_matches(info, key)
 
 
 def _cast_to_bytes(data: Union[bytes, str, base.Asn1Item]) -> bytes:
@@ -160,21 +197,32 @@ def prepare_alg_id(
     return alg_id
 
 
-_HASH_PARAMS_NULL = {
-    rfc8017.id_sha224,
-    rfc8017.id_sha256,
-    rfc8017.id_sha384,
-    rfc8017.id_sha512,
-    univ.ObjectIdentifier("1.3.14.3.2.26"),  # sha1
-}
+_HASH_NAMES_WITH_NULL = ("sha1", "sha224", "sha256", "sha384", "sha512")
 
 
-def prepare_hash_alg_id(hash_alg: str, fill_random_params: bool = False) -> rfc5280.AlgorithmIdentifier:
-    """Build the ``AlgorithmIdentifier`` for a SHA / SHA-3 / SHAKE hash."""
+def prepare_hash_alg_id(
+    hash_alg: str, fill_random_params: bool = False, *, with_null: Optional[bool] = None
+) -> rfc5280.AlgorithmIdentifier:
+    """Build the ``AlgorithmIdentifier`` for a SHA / SHA-3 / SHAKE hash.
+
+    :param hash_alg: The hash name, e.g. ``sha256`` or ``sha3_256``.
+    :param fill_random_params: Fill the parameters with random bytes (a negative test).
+    :param with_null: ``None`` keeps the bytes this function always wrote: NULL parameters for SHA-1 and SHA-2
+        (RFC 4055 Section 2.1, the form inside RSASSA-PSS, OAEP and MGF1), absent for SHA-3 and SHAKE. ``False``
+        writes absent parameters, which RFC 5754 Section 2 requires when SHA-2 is generated for CMS or CMP.
+        ``True`` writes NULL.
+    :raises ValueError: If ``with_null`` is ``True`` for SHA-3 or SHAKE (RFC 9688 Section 2, RFC 8702 Section 3:
+        the parameters are absent), if it is combined with ``fill_random_params``, or the hash is unknown.
+    """
     oid = sha_alg_name_to_oid(hash_alg)
     if fill_random_params:
+        if with_null is not None:
+            raise ValueError("Only one of `fill_random_params` or `with_null` can be provided.")
         return prepare_alg_id(oid, fill_random_params=True)
-    if oid in _HASH_PARAMS_NULL:
+    has_null_form = hash_alg.lower() in _HASH_NAMES_WITH_NULL
+    if with_null and not has_null_form:
+        raise ValueError(f"The parameters of {hash_alg} must be absent, `with_null=True` is not possible.")
+    if with_null or (with_null is None and has_null_form):
         return prepare_alg_id(oid, value=univ.Null(""))
     return prepare_alg_id(oid)
 
@@ -217,35 +265,42 @@ def prepare_rsa_pss_alg_id(
 
 def prepare_sig_alg_id(
     key: Union[PrivateKey, PublicKey],
-    hash_alg: str = "sha256",
+    hash_alg: Optional[str] = None,
     use_rsa_pss: bool = False,
 ) -> rfc5280.AlgorithmIdentifier:
-    """Build the signature ``AlgorithmIdentifier`` for a traditional signing/verifying key.
+    """Build the signature ``AlgorithmIdentifier`` for a signing or verifying key of any signature family.
 
-    Maps a key plus a digest to the matching signature OID (e.g. a DSA key with
-    ``sha256`` to ``id-dsa-with-sha256``; an EC key with ``sha384`` to
-    ``ecdsa-with-SHA384``). EdDSA keys ignore ``hash_alg`` (Ed25519 / Ed448 carry
-    no separate digest); RSA keys yield a PKCS#1 v1.5 identifier (NULL parameters)
-    unless ``use_rsa_pss`` selects RSASSA-PSS.
+    Maps a key plus a digest to the matching signature OID (e.g. a DSA key with ``sha256`` to
+    ``id-dsa-with-sha256``; an EC key with ``sha384`` to ``ecdsa-with-SHA384``), reading the rows of
+    :data:`keyutils_py.oids.SIG_ALG_OID_2_INFO`. ``None`` is the default of the key family: ``sha256`` for RSA,
+    ECDSA and DSA, nothing for the others. EdDSA, pure ML-DSA, SLH-DSA, Falcon and the stateful-hash keys have one
+    identifier and ignore ``hash_alg``, with one exception: a hash that the key registers a pre-hash OID for
+    (ML-DSA with ``sha512``, SLH-DSA with the hash of its parameter set) selects the pre-hash OID. RSA keys yield a
+    PKCS#1 v1.5 identifier (NULL parameters) unless ``use_rsa_pss`` selects RSASSA-PSS; a composite key yields the
+    OID of its combination, with the ``-pss`` OID when ``use_rsa_pss`` is set and the key has an RSA half.
 
     :param key: The signature key, private or public.
-    :param hash_alg: The digest name (e.g. ``sha256``); ignored for EdDSA keys.
-    :param use_rsa_pss: For an RSA key, build a RSASSA-PSS identifier instead of
-        PKCS#1 v1.5.
-    :raises BadAlg: If the key type / hash combination has no known signature OID.
+    :param hash_alg: The digest name (e.g. ``sha256``), or ``None`` for the default of the key family.
+    :param use_rsa_pss: Build a RSASSA-PSS identifier for an RSA key, the ``-pss`` OID for a composite RSA key.
+    :raises BadAlg: If the key is no signature key or the key / hash combination has no known signature OID.
     """
+    if isinstance(key, (CompositeSigPrivateKey, CompositeSigPublicKey)):
+        return prepare_alg_id(key.get_oid(use_pss=use_rsa_pss))
+    if isinstance(key, (PQHashStatefulSigPrivateKey, PQHashStatefulSigPublicKey)):
+        return prepare_alg_id(key.get_oid())
     name = get_key_name(key)
-    if name in ("ed25519", "ed448"):
-        return prepare_alg_id(TRAD_SIG_NAME_2_OID[name])
+    needs_hash = (name, None) not in _SIG_ALG_OID_BY_KEY_HASH
+    if needs_hash and hash_alg is None:
+        hash_alg = "sha256"
     if name == "rsa" and use_rsa_pss:
-        return prepare_rsa_pss_alg_id(hash_alg)
-    oid = TRAD_SIG_NAME_2_OID.get(f"{name}-{hash_alg}")
+        return prepare_rsa_pss_alg_id(hash_alg or "sha256")
+    oid = _SIG_ALG_OID_BY_KEY_HASH.get((name, hash_alg)) or (
+        None if needs_hash else _SIG_ALG_OID_BY_KEY_HASH.get((name, None))
+    )
     if oid is None:
         raise BadAlg(f"No signature AlgorithmIdentifier for a {name!r} key with hash {hash_alg!r}.")
-    if name == "rsa":
-        # RSA PKCS#1 v1.5 carries NULL parameters (RFC 4055 / RFC 8017).
+    if SIG_ALG_OID_2_INFO[oid].params is SigAlgParametersSpec.MUST_BE_NULL:
         return prepare_alg_id(oid, value=univ.Null(""))
-    # ECDSA / DSA — parameters absent (RFC 5758).
     return prepare_alg_id(oid)
 
 
@@ -272,24 +327,102 @@ def decode_alg_id_parameters(alg_id: rfc5280.AlgorithmIdentifier) -> rfc5280.Alg
 # ---------------------------------------------------------------------------
 
 
-def generate_key(algorithm: str = "hss", **params):
-    """Generate a private key.
+def generate_key(algorithm: str = "rsa", **params):  # noqa: D417 for RF docs
+    """Generate a private key based on the specified algorithm.
 
-    See the package README for the algorithm name reference.
+    Post-quantum signature algorithms are not based on hash versions alone but can be specified within the
+    signing functions.
+
+    Arguments:
+    ---------
+        - `algorithm`: The cryptographic algorithm to use for key generation. Defaults to "rsa".
+        - `by_name`: If True, the key is generated based on the algorithm name. Defaults to `False`.
+        (e.g., "composite-sig-ml-dsa-44-ed25519") The parameters are ignored in this case.
+        - `seed`: If set, the key is generated from this seed (or private value) instead of at random.
+        - `**params`: Additional parameters specific to the algorithm.
+
+    Traditional algorithms:
+    ---------------------
+        - "rsa": RSA.
+        - "dsa": DSA.
+        - "ecdsa" or "ecdh": Elliptic Curve.
+        - "ed25519", "ed448", "x25519", "x448": the Edwards and Montgomery curves.
+        - "dh": Diffie-Hellman.
+        - "bad_rsa_key": RSA with a bit size of 512.
+        - "rsa-kem": RSA-KEM RFC9690 (either by directly using the algorithm name or with trad_key=${key}).
+
+    PQ Signature algorithms:
+    ------------------------
+        - "ml-dsa-44", "ml-dsa-65", "ml-dsa-87"
+        - "slh-dsa" or specified version.
+        - "falcon512", "falcon1024", "falcon-padded-512", "falcon-padded-1024"
+
+    KEM algorithms:
+    ---------------
+        - "ml-kem-512", "ml-kem-768", "ml-kem-1024"
+        - "sntrup761"
+        - "mceliece-348864", "mceliece-460896", "mceliece-6688128", "mceliece-6960119"
+        - "frodokem-976-aes", "frodokem-976-shake", "frodokem-1344-aes", "frodokem-1344-shake"
+
+    Stateful hash-based signature algorithms:
+    -----------------------------------------
+        - "hss", "xmss", "xmssmt" or a specified version.
+
+    Hybrid algorithms:
+    ------------------
+        - "xwing"
+        - "composite-sig"
+        - "composite-kem"
+        - "chempat"
+
+    Additional Parameters:
+    ----------------------
+        - For "rsa" and "dsa":
+            - length (int, str): The length of the key to generate, in bits. Default is 2048.
+        - For "ecdsa" or "ecdh":
+            - curve (str): Curve name, see `cryptography.hazmat.primitives.asymmetric.ec`. Default is `secp256r1`.
+        - For "dh":
+            - g (int): The generator for DH key generation. Default is 2.
+            - secret_scalar (str, int): the private key value for DH key generation. If not provided, one is generated.
+            - length (int, str): The length of the modulus to generate if `p` is not provided. Default is 2048.
+
+    Additional Hybrid Parameters:
+    ----------------------------
+        - pq_name (str): The name of the post-quantum algorithm.
+        - trad_param (str): The name of the traditional algorithm. needs to be `ecdh` for
+        composite-kem/chempat and
+        `ecdsa` for composite-sig.
+        - pq_key (PQPrivateKey): The post-quantum private key.
+        - trad_key (ECDHPrivateKey or RSA): The traditional private key.
+
+    Additional PQ parameters:
+    ------------------------
+        - `levels`(int): To set the levels for an HSS private key.
+
+    Returns:
+    -------
+        - The generated private key.
+
+    Raises:
+    ------
+        - `ValueError` if the specified algorithm is not supported or if invalid parameters are provided.
+        - `MissingOQSDependencyError` if the algorithm needs `liboqs`, which is not installed.
+
+    Examples:
+    --------
+    | ${private_key}= | Generate Key | algorithm=rsa | length=2048 |
+    | ${private_key}= | Generate Key | algorithm=dh | length=2048 |
+    | ${private_key}= | Generate Key | algorithm=ecdsa | curve=secp384r1 |
+
     """
-    from keyutils_py.utils import is_hybrid_algorithm, is_supported_pq_algorithm  # avoid load-order issues
-
     name = algorithm.lower()
-    if is_hybrid_algorithm(name):
-        if name in HybridKeyFactory.supported_algorithms():
-            return HybridKeyFactory.generate_hybrid_key(name, **params)
-        return HybridKeyFactory.generate_hybrid_key_by_name(name)
-    if not is_supported_pq_algorithm(name):
-        raise NotImplementedError(f"{algorithm!r}: {NOT_IMPLEMENTED_HINT}")
     require_oqs_if_needed(name)
-    if is_stateful_hash_algorithm(name):
-        return PQStatefulSigFactory.generate_pq_stateful_key(name, **params)
-    return PQKeyFactory.generate_key_by_name(name, **params)
+
+    seed = params.pop("seed", None)
+    if seed is not None:
+        return CombinedKeyFactory.generate_key_from_seed(name, seed=seed, curve=params.get("curve"))
+
+    return CombinedKeyFactory.generate_key(name, **params)
 
 
 def _curve_oid_to_name(oid: univ.ObjectIdentifier) -> str:
@@ -362,92 +495,199 @@ def generate_key_based_on_alg_id(alg_id: rfc5280.AlgorithmIdentifier) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def save_key(
-    key,
+def save_key(  # noqa: D417 undocumented-params
+    key: PrivateKey,
     path: str,
     password: Optional[str] = "11111",
     save_type: str = "seed",
 ) -> None:
-    """Write ``key`` to ``path`` as a (optionally encrypted) PEM file."""
-    if not isinstance(key, (PQHashStatefulSigPrivateKey, PQSignaturePrivateKey, PQKEMPrivateKey, HybridPrivateKey)):
-        raise NotImplementedError(f"{type(key).__name__}: {NOT_IMPLEMENTED_HINT}")
+    """Save a private key to a file, optionally encrypting it with a passphrase.
 
-    if password:
-        enc_alg: Union[serialization.NoEncryption, serialization.BestAvailableEncryption] = (
-            serialization.BestAvailableEncryption(password.encode("utf-8"))
-        )
-    else:
-        enc_alg = serialization.NoEncryption()
+    Arguments:
+    ---------
+        - `key`: The private key object to save.
+        - `path`: The file path where the key will be saved.
+        - `password`: Optional passphrase to encrypt the key. If None or empty, save without encryption.
+        Defaults to "11111". An encrypted key is a PKCS#8 `ENCRYPTED PRIVATE KEY`.
+        - `save_type`: How to save the ML-DSA or ML-KEM key. Can be "seed", "raw" or "seed_and_raw".
+        Defaults to "seed".
 
-    if isinstance(key, HybridPrivateKey):
-        der = HybridKeyFactory.save_private_key_one_asym_key(
-            private_key=key,
-            save_type=save_type,
-            version=1,
-        )
-    elif isinstance(key, PQHashStatefulSigPrivateKey):
-        del save_type  # ignored
+    Raises:
+    ------
+        - `TypeError` if the provided key is not a valid private key object.
+
+    Examples:
+    --------
+    | Save Key | ${key} | /path/to/save/key.pem | password123 |
+
+    """
+    if isinstance(key, (TradPrivateKey, PQHashStatefulSigPrivateKey)):
+        # The standard PKCS#8 encoding is all these keys have, `save_type` does not apply.
         data = key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=enc_alg,
+            encryption_algorithm=(
+                serialization.BestAvailableEncryption(password.encode("utf-8"))
+                if password
+                else serialization.NoEncryption()
+            ),
         )
-        with open(path, "wb") as fh:
-            fh.write(data)
-        return
     else:
-        require_oqs_if_needed(key.name)
-        der = PQKeyFactory.save_private_key_one_asym_key(
+        if isinstance(key, (PQSignaturePrivateKey, PQKEMPrivateKey)):
+            require_oqs_if_needed(key.name)
+        der = CombinedKeyFactory.save_private_key_one_asym_key(
             private_key=key,
+            password=None,
             save_type=save_type,
             version=1,
+            encoding=serialization.Encoding.DER,
         )
-
-    if password:
-        from keyutils_py.keys.key_pyasn1_utils import (
-            encrypt_private_key_pkcs8_pem,  # pylint: disable=import-outside-toplevel
-        )
-
-        data = encrypt_private_key_pkcs8_pem(private_key_der=der, password=password)
-    else:
-        body = "\n".join(textwrap.wrap(base64.b64encode(der).decode("ascii"), 64))
-        data = (f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n").encode("ascii")
+        if password:
+            data = encrypt_private_key_pkcs8_pem(private_key_der=der, password=password)
+        else:
+            body = "\n".join(textwrap.wrap(base64.b64encode(der).decode("ascii"), 64))
+            data = (f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n").encode("ascii")
 
     with open(path, "wb") as fh:
         fh.write(data)
 
 
-def _load_private_key_from_one_asym_key(one_asym_key: rfc5958.OneAsymmetricKey):
-    alg_id = one_asym_key["privateKeyAlgorithm"]
-    oid = alg_id["algorithm"]
-    if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-        require_oqs_if_needed(PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid])
-        return PQStatefulSigFactory.load_private_key_from_one_asym_key(one_asym_key)
-    if oid in PQ_OID_2_NAME:
-        require_oqs_if_needed(PQ_OID_2_NAME[oid])
-        return PQKeyFactory.from_one_asym_key(one_asym_key)
-    if HybridKeyFactory.is_hybrid_oid(oid):
-        return HybridKeyFactory.from_one_asym_key(one_asym_key)
-    raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
+def _require_oqs_for_oid(oid: univ.ObjectIdentifier) -> None:
+    """Raise :class:`MissingOQSDependencyError` if the algorithm of ``oid`` needs a missing liboqs."""
+    name = PQ_STATEFUL_HASH_SIG_OID_2_NAME.get(oid) or PQ_OID_2_NAME.get(oid)
+    if name is not None:
+        require_oqs_if_needed(name)
 
 
-def load_private_key_from_file(filepath: str, password: Optional[str] = "11111"):
-    """Load a private key from a PEM file (PKCS#8 or plain)."""
+def load_private_key_from_one_asym_key(  # noqa: D417 for RF docs
+    data: Union[bytes, rfc5958.OneAsymmetricKey], must_be_version_2: bool = False
+):
+    """Load a private key from a ``OneAsymmetricKey`` (DER bytes or a decoded structure).
+
+    Arguments:
+    ---------
+        - `data`: The DER encoded or decoded `OneAsymmetricKey`.
+        - `must_be_version_2`: If True, the key must be version 2 (include the public key). Defaults to `False`.
+
+    Raises:
+    ------
+        - `InvalidKeyData`: If DER bytes do not decode to a `OneAsymmetricKey`, or the key data is invalid.
+        - `BadAsn1Data`: If the DER bytes have a remainder.
+        - `BadAlg`: If the algorithm is not supported.
+        - `MismatchingKey`: If the private key does not match the public key.
+        - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
+
+    """
+    if isinstance(data, (bytes, bytearray)):
+        one_asym_key = decode_key_structure(bytes(data), rfc5958.OneAsymmetricKey(), "OneAsymmetricKey")
+    else:
+        one_asym_key = data
+    _require_oqs_for_oid(one_asym_key["privateKeyAlgorithm"]["algorithm"])
+    return CombinedKeyFactory.load_private_key_from_one_asym_key(one_asym_key, must_be_version_2)
+
+
+_PEM_PRIVATE_KEY = re.compile(
+    rb"-----BEGIN ((?:[A-Za-z0-9-]+ )?)PRIVATE KEY-----(.*?)-----END \1PRIVATE KEY-----", re.DOTALL
+)
+
+
+def load_private_key_from_file(  # noqa: D417 for RF docs
+    filepath: str, password: Optional[str] = "11111"
+):
+    """Load a private key from a PEM file.
+
+    The kind of key is taken from the PEM label: a PKCS#8 `PRIVATE KEY` or `ENCRYPTED PRIVATE KEY`, a
+    `<NAME> PRIVATE KEY` block of a post-quantum or hybrid key (encrypted with `Proc-Type`/`DEK-Info` headers
+    or not), or the traditional OpenSSL `RSA PRIVATE KEY`, `EC PRIVATE KEY` and `DSA PRIVATE KEY`.
+    Lines outside of the PEM block (e.g. a license header) are ignored.
+
+    Arguments:
+    ---------
+        - `filepath`: The path to the file containing the PEM-encoded key.
+        - `password`: The password to decrypt the key, if it is encrypted. Defaults to "11111".
+          (`x448`, `x25519` and the ed versions do not support encryption.)
+
+    Returns:
+    -------
+        - An instance of the loaded key, such as `RSAPrivateKey`, `X448PrivateKey`, or `MLDSAPrivateKey`.
+
+    Raises:
+    ------
+        - `FileNotFoundError` if the file does not exist.
+        - `InvalidKeyData` if the file contains no PEM private key.
+        - `ValueError` if the key is encrypted and no password was given.
+
+    Examples:
+    --------
+    | ${key}= | Load Private Key From File | /path/to/key.pem | password123 |
+    | ${x448_key}= | Load Private Key From File | /path/to/x448_key.pem |
+
+    """
     with open(filepath, "rb") as fh:
         raw = fh.read()
-    if b"-----BEGIN ENCRYPTED PRIVATE KEY-----" in raw:
+
+    match = _PEM_PRIVATE_KEY.search(raw)
+    if match is None:
+        raise InvalidKeyData(f"No PEM private key found in {filepath}.")
+    block, label = match.group(0), match.group(1).strip()
+    is_openssl_encrypted = b"Proc-Type: 4,ENCRYPTED" in block
+
+    if label == b"DSA":
+        return DSAPrivateKey.load(block, password)
+    if label in (b"RSA", b"EC"):
+        # The traditional OpenSSL formats, which only `cryptography` reads (encrypted with OpenSSL's own scheme).
+        return serialization.load_pem_private_key(
+            block, password=password.encode("utf-8") if password and is_openssl_encrypted else None
+        )
+
+    if label == b"ENCRYPTED" or is_openssl_encrypted:
         if password is None:
-            raise ValueError("Password required to decrypt PKCS#8 encrypted private key.")
-        der = decrypt_private_key_pkcs8_pem(pem_data=raw, password=password)
-    else:
-        der = load_and_decode_pem_file(filepath)
+            raise ValueError("A password is required to decrypt the encrypted private key.")
+        return load_private_key_from_one_asym_key(load_enc_key(password=password, data=block))
+
+    der = decode_pem_string(block)
+    if label:
+        return load_private_key_from_one_asym_key(der)
+
     try:
-        one_asym_key, rest = try_decode_pyasn1(der, rfc5958.OneAsymmetricKey())
-    except Exception as exc:  # noqa: BLE001
-        raise InvalidKeyData(f"Failed to decode OneAsymmetricKey from {filepath}.") from exc
-    if rest:
-        raise BadAsn1Data("OneAsymmetricKey")
-    return _load_private_key_from_one_asym_key(one_asym_key)
+        return load_private_key_from_one_asym_key(der)
+    except (BadAsn1Data, InvalidKeyData) as err:
+        # Some files hold a traditional PKCS#1 `RSAPrivateKey` or SEC1 `ECPrivateKey` under the PKCS#8 label.
+        try:
+            return serialization.load_der_private_key(der, password=None)  # type: ignore[return-value]
+        except ValueError:
+            raise err from None
+
+
+def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):  # noqa: D417 for RF docs
+    """Load a public key from a DER-encoded SubjectPublicKeyInfo structure.
+
+    Arguments:
+    ---------
+         - `data`: DER-encoded SubjectPublicKeyInfo structure or a pyasn1 `SubjectPublicKeyInfo` object.
+
+    Returns:
+    -------
+        - The loaded public key.
+
+    Raises:
+    ------
+          - `InvalidKeyData`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
+          - `BadAsn1Data`: If the DER bytes have a remainder.
+          - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown.
+          - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
+
+    Examples:
+    --------
+    ${public_key}= | Load Public Key From Spki| ${data} |
+
+    """
+    if isinstance(data, (bytes, bytearray)):
+        spki = decode_key_structure(bytes(data), rfc5280.SubjectPublicKeyInfo(), "SubjectPublicKeyInfo")
+    else:
+        spki = data
+    _require_oqs_for_oid(spki["algorithm"]["algorithm"])
+    return CombinedKeyFactory.load_public_key_from_spki(spki)
 
 
 def load_public_key_from_file(filepath: str):
@@ -459,16 +699,7 @@ def load_public_key_from_file(filepath: str):
         raise InvalidKeyData(f"Failed to decode SubjectPublicKeyInfo from {filepath}.") from exc
     if rest:
         raise BadAsn1Data("SubjectPublicKeyInfo")
-    oid = spki["algorithm"]["algorithm"]
-    if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-        require_oqs_if_needed(PQ_STATEFUL_HASH_SIG_OID_2_NAME[oid])
-        return PQStatefulSigFactory.load_public_key_from_spki(spki)
-    if oid in PQ_OID_2_NAME:
-        require_oqs_if_needed(PQ_OID_2_NAME[oid])
-        return PQKeyFactory.load_public_key_from_spki(spki)
-    if HybridKeyFactory.is_hybrid_oid(oid):
-        return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
-    raise NotImplementedError(f"Algorithm {may_return_oid_to_name(oid)}: {NOT_IMPLEMENTED_HINT}")
+    return load_public_key_from_spki(spki)
 
 
 def _stateful_hash_filename_to_algorithm(filename: str) -> Optional[str]:
@@ -579,13 +810,13 @@ def get_key_name(key: Union[PrivateKey, PublicKey]) -> str:
 
 def _is_private_key(key: object) -> bool:
     """Return True if ``key`` is a private key (has a ``public_key()`` method)."""
-    from cryptography.hazmat.primitives.asymmetric import dsa, ed25519, ed448, x25519, x448  # noqa
+    from cryptography.hazmat.primitives.asymmetric import ed25519, ed448, x25519, x448  # noqa
 
     return isinstance(
         key,
         (
             RSAPrivateKey,
-            dsa.DSAPrivateKey,
+            DSAPrivateKey,
             ec.EllipticCurvePrivateKey,
             ed25519.Ed25519PrivateKey,
             ed448.Ed448PrivateKey,
@@ -786,17 +1017,22 @@ def manipulate_sig_based_on_key(
     if key is None:
         return manipulate_first_byte(data)
     if isinstance(key, PQHashStatefulSigPrivateKey):
-        return _manipulate_pq_stateful_signature_bytes(data, key, manipulate_sig=True)
+        return manipulate_pq_stateful_signature_bytes(data, key, manipulate_sig=True)
     return manipulate_first_byte(data)
 
 
-def _manipulate_pq_stateful_signature_bytes(
+def manipulate_pq_stateful_signature_bytes(
     data: bytes,
     key: PQHashStatefulSigPrivateKey,
     manipulate_sig: bool = True,
     index: Optional[int] = None,
 ) -> bytes:
-    """Mutate a stateful-hash signature (XMSS / XMSSMT / HSS) for negative tests."""
+    """Mutate a stateful-hash signature (XMSS / XMSSMT / HSS) for negative tests.
+
+    Corrupts either the signature payload (``manipulate_sig=True``) or the
+    embedded LMS leaf-index (``manipulate_sig=False``, optionally to a specific
+    ``index``) to build invalid test vectors.
+    """
     index_start = 0
     alg_details: Optional[Dict[str, Any]] = None
     if isinstance(key, XMSSPrivateKey):
@@ -967,5 +1203,10 @@ __all__ = [
     "decode_alg_id_parameters",
     # Negative-test helpers
     "manipulate_sig_based_on_key",
+    "manipulate_pq_stateful_signature_bytes",
     "modify_pq_stateful_sig_private_key",
+    # Loading and consistency checks
+    "load_private_key_from_one_asym_key",
+    "load_public_key_from_spki",
+    "check_consistency_sig_alg_id_and_key",
 ]

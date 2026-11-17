@@ -13,7 +13,7 @@ import unittest
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc5480, rfc8017, rfc9480, rfc9481, rfc9688
 
@@ -26,6 +26,7 @@ from keyutils_py import (
 from keyutils_py.exceptions import BadAlg, BadSigAlgID, BadSigAlgIDParams
 from keyutils_py.factories.trad_factory import TradKeyFactory
 from keyutils_py.keyutils import prepare_sig_alg_id, validate_sig_alg_id
+from keyutils_py.types import DSAPrivateKey
 
 
 def _alg_id(oid, parameters=None) -> rfc9480.AlgorithmIdentifier:
@@ -162,11 +163,15 @@ class TestStrictOidKeyBinding(unittest.TestCase):
         with self.assertRaises(BadSigAlgID):
             verify_signature_with_alg_id(key.public_key(), _alg_id(rfc9481.sha256WithRSAEncryption), b"data", b"\x00")
 
-    def test_verify_rsa_key_with_sha1_oid_raises_badalg(self):
-        """GIVEN an RSA key + rsa-sha1 OID (NULL params) / WHEN verifying / THEN BadAlg (SHA-1 rejected)."""
+    def test_verify_rsa_key_with_sha1_oid_is_refused_unless_allowed(self):
+        """GIVEN an RSA key + rsa-sha1 OID (NULL params) / WHEN verifying / THEN BadAlg, or verified with allow_sha1."""
         alg_id = _alg_id(rfc8017.sha1WithRSAEncryption, univ.Null(""))
+        genuine = self.rsa_key.sign(b"data", padding.PKCS1v15(), hashes.SHA1())
         with self.assertRaises(BadAlg):
-            verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", b"\x00")
+            verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", genuine)
+        verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", genuine, allow_sha1=True)
+        with self.assertRaises(InvalidSignature):
+            verify_signature_with_alg_id(self.rsa_key.public_key(), alg_id, b"data", b"\x00", allow_sha1=True)
 
     def test_sign_ec_key_with_rsa_pss_oid_raises_sig_alg_id(self):
         """GIVEN an EC key + a RSASSA-PSS OID / WHEN signing / THEN BadSigAlgID (family mismatch, not BadAlg)."""
@@ -184,12 +189,21 @@ class TestStrictOidKeyBinding(unittest.TestCase):
 class TestGenericDispatch(unittest.TestCase):
     """sign_data / verify_signature now cover EC (hashed) and EdDSA keys directly."""
 
-    def test_ec_default_hash(self):
-        """GIVEN an EC key / WHEN sign_data with no hash_alg / THEN ECDSA-SHA256 round-trips."""
+    def test_ec_without_hash_is_an_error(self):
+        """GIVEN an EC key / WHEN sign_data or verify_signature has no hash_alg / THEN ValueError, no silent SHA-256."""
         key = ec.generate_private_key(ec.SECP256R1())
-        msg = b"generic ecdsa default"
-        sig = sign_data(msg, key)
-        verify_signature(key.public_key(), sig, msg)
+        sig = sign_data(b"generic ecdsa", key, hash_alg="sha256")
+        with self.assertRaises(ValueError):
+            sign_data(b"generic ecdsa", key)
+        with self.assertRaises(ValueError):
+            verify_signature(key.public_key(), sig, b"generic ecdsa")
+
+    def test_ec_sha256(self):
+        """GIVEN an EC key + hash_alg=sha256 / WHEN sign_data→verify_signature / THEN round-trips, cryptography too."""
+        key = ec.generate_private_key(ec.SECP256R1())
+        msg = b"generic ecdsa sha256"
+        sig = sign_data(msg, key, hash_alg="sha256")
+        verify_signature(key.public_key(), sig, msg, hash_alg="sha256")
         key.public_key().verify(sig, msg, ec.ECDSA(hashes.SHA256()))
 
     def test_ec_explicit_hash(self):
@@ -204,10 +218,10 @@ class TestGenericDispatch(unittest.TestCase):
         """GIVEN a generic EC signature / WHEN a byte is flipped / THEN InvalidSignature."""
         key = ec.generate_private_key(ec.SECP256R1())
         msg = b"generic ecdsa"
-        tampered = bytearray(sign_data(msg, key))
+        tampered = bytearray(sign_data(msg, key, hash_alg="sha256"))
         tampered[-1] ^= 0x01
         with self.assertRaises(InvalidSignature):
-            verify_signature(key.public_key(), bytes(tampered), msg)
+            verify_signature(key.public_key(), bytes(tampered), msg, hash_alg="sha256")
 
     def test_ed25519_round_trip(self):
         """GIVEN an Ed25519 key / WHEN sign_data→verify_signature / THEN round-trips."""
@@ -231,31 +245,30 @@ class TestDsaSign(unittest.TestCase):
     key is generated through ``TradKeyFactory`` (the trad key-generation entry).
     """
 
-    key: dsa.DSAPrivateKey
+    key: DSAPrivateKey
 
     @classmethod
     def setUpClass(cls):
         key = TradKeyFactory.generate_trad_key("dsa")
-        assert isinstance(key, dsa.DSAPrivateKey)
+        assert isinstance(key, DSAPrivateKey)
         cls.key = key
 
     def test_sign_data_native_verify(self):
         """GIVEN a generated DSA key / WHEN sign_data / THEN cryptography verifies it natively."""
         msg = b"dsa sign+verify"
-        sig = sign_data(msg, self.key)
-        # The library only signs DSA; verify with cryptography's native DSA verify.
+        sig = sign_data(msg, self.key, hash_alg="sha256")
+        # Verify through the wrapper's cryptography-shaped API (HashAlgorithm instance accepted).
         self.key.public_key().verify(sig, msg, hashes.SHA256())
 
-    def test_sign_data_explicit_hash(self):
-        """GIVEN a DSA key + hash_alg=sha384 / WHEN sign_data / THEN native verify with SHA384."""
-        msg = b"dsa sha384"
-        sig = sign_data(msg, self.key, hash_alg="sha384")
-        self.key.public_key().verify(sig, msg, hashes.SHA384())
+    def test_sign_data_non_sha256_rejected(self):
+        """GIVEN a DSA key + hash_alg=sha384 / WHEN sign_data / THEN ValueError (DSA signs with SHA-256 only)."""
+        with self.assertRaises(ValueError):
+            sign_data(b"dsa sha384", self.key, hash_alg="sha384")
 
     def test_sign_data_tampered_rejected(self):
         """GIVEN a DSA signature / WHEN a byte is flipped / THEN native verify raises InvalidSignature."""
         msg = b"dsa tamper"
-        tampered = bytearray(sign_data(msg, self.key))
+        tampered = bytearray(sign_data(msg, self.key, hash_alg="sha256"))
         tampered[-1] ^= 0x01
         with self.assertRaises(InvalidSignature):
             self.key.public_key().verify(bytes(tampered), msg, hashes.SHA256())

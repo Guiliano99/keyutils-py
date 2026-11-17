@@ -15,14 +15,14 @@ hybrid keys. Mappings follow NIST SP 800-57 Part 1 Rev. 5 Tables 2 and 4.
 
 from typing import Optional, Union
 
-from cryptography.hazmat.primitives.asymmetric import dsa, ed448, ed25519, rsa, x448, x25519
+from cryptography.hazmat.primitives.asymmetric import ed448, ed25519, rsa, x448, x25519
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey, EllipticCurvePublicKey
 
 from keyutils_py.keys.abstract_pq import PQKEMPublicKey, PQSignaturePublicKey
 from keyutils_py.keys.abstract_stateful_hash_sig import PQHashStatefulSigPublicKey
 from keyutils_py.keys.abstract_wrapper_keys import HybridPublicKey, TradKEMPublicKey
 from keyutils_py.keys.stateful_sig_keys import HSSPublicKey, XMSSMTPublicKey, XMSSPublicKey
-from keyutils_py.types import PrivateKey, PublicKey
+from keyutils_py.types import DSAPrivateKey, DSAPublicKey, PrivateKey, PublicKey
 
 # Security strength values follow NIST SP 800-57 Part 1 Revision 5, Tables 2 and 4.
 # Table 2 provides the traditional key equivalence for RSA/DSA and ECC key sizes,
@@ -55,7 +55,7 @@ HASH_ALG_TO_STRENGTH = {
 # ``typing.Union`` alias and unions can't be used with ``isinstance``.
 _TRAD_PRIVATE_KEY_TYPES = (
     rsa.RSAPrivateKey,
-    dsa.DSAPrivateKey,
+    DSAPrivateKey,
     EllipticCurvePrivateKey,
     ed25519.Ed25519PrivateKey,
     ed448.Ed448PrivateKey,
@@ -166,7 +166,7 @@ def estimate_key_security_strength(key: Union[PrivateKey, PublicKey]) -> int:
 
     if isinstance(key, rsa.RSAPublicKey):
         return _rsa_security_strength(key.key_size)
-    if isinstance(key, dsa.DSAPublicKey):
+    if isinstance(key, DSAPublicKey):
         return _rsa_security_strength(key.key_size)
     if isinstance(key, EllipticCurvePublicKey):
         return _ecc_security_strength(key.curve.key_size)

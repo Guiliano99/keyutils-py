@@ -11,14 +11,14 @@ import unittest
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 
 from keyutils_py.keys.stateful_sig_keys import HSSPrivateKey, HSSPublicKey
-from keyutils_py.keyutils import _load_private_key_from_one_asym_key
+from keyutils_py.keyutils import load_private_key_from_one_asym_key
 from pyasn1_alt_modules import rfc5958
 from pyasn1.codec.der.decoder import decode as der_decode
 
 
 def _load_from_pkcs8_der(der_bytes: bytes) -> HSSPrivateKey:
     one_asym_key, _ = der_decode(der_bytes, asn1Spec=rfc5958.OneAsymmetricKey())
-    return _load_private_key_from_one_asym_key(one_asym_key)
+    return load_private_key_from_one_asym_key(one_asym_key)
 
 
 class TestHSSKeyLoading(unittest.TestCase):

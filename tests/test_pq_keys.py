@@ -92,6 +92,56 @@ class TestPQKEMRoundTrip(unittest.TestCase):
         ss_b = loaded.decaps(ct)
         self.assertEqual(ss_a, ss_b)
 
+    def test_frodokem_976_shake_save_load_roundtrip(self):
+        """GIVEN FrodoKEM-976-SHAKE / WHEN save (PKCS8) + load by OID / THEN name+decaps match."""
+        key = generate_key("frodokem-976-shake")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "k.pem")
+            save_key(key, path, password="frodo-pw", save_type="seed")
+            loaded = load_private_key_from_file(path, password="frodo-pw")
+        self.assertEqual(loaded.name, "frodokem-976-shake")
+        ss_a, ct = loaded.public_key().encaps()
+        ss_b = loaded.decaps(ct)
+        self.assertEqual(ss_a, ss_b)
+
+    def test_frodokem_1344_aes_save_load_roundtrip(self):
+        """GIVEN FrodoKEM-1344-AES / WHEN save (PKCS8) + load by OID / THEN name+decaps match."""
+        key = generate_key("frodokem-1344-aes")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "k.pem")
+            save_key(key, path, password="frodo-pw", save_type="seed")
+            loaded = load_private_key_from_file(path, password="frodo-pw")
+        self.assertEqual(loaded.name, "frodokem-1344-aes")
+        ss_a, ct = loaded.public_key().encaps()
+        ss_b = loaded.decaps(ct)
+        self.assertEqual(ss_a, ss_b)
+
+    def test_frodokem_640_is_unsupported(self):
+        """GIVEN FrodoKEM-640 (no OID in the ISO 18033-2 arc) / WHEN generated / THEN it is rejected."""
+        with self.assertRaises(ValueError):
+            generate_key("frodokem-640-aes")
+
+
+class TestFrodoKEMOIDTable(unittest.TestCase):
+    """The FrodoKEM OID table must stay a clean bijection onto the ISO/IEC 18033-2 arc."""
+
+    def test_name_to_oid_is_bijective(self):
+        """GIVEN FRODOKEM_NAME_2_OID / THEN every name and OID is unique (no collisions)."""
+        from keyutils_py.oids import FRODOKEM_NAME_2_OID
+
+        names = list(FRODOKEM_NAME_2_OID.keys())
+        oids = list(FRODOKEM_NAME_2_OID.values())
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(len(oids), len(set(oids)))
+
+    def test_no_frodokem_640_or_efrodokem(self):
+        """GIVEN FRODOKEM_NAME_2_OID / THEN 640 and eFrodoKEM variants (unassigned by the draft) are absent."""
+        from keyutils_py.oids import FRODOKEM_NAME_2_OID
+
+        for name in FRODOKEM_NAME_2_OID:
+            self.assertNotIn("640", name)
+            self.assertFalse(name.startswith("efrodokem"))
+
 
 class TestPQAlgorithmListing(unittest.TestCase):
     def test_get_supported_pq_algorithms_dict_shape(self):
