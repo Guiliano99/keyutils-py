@@ -66,9 +66,7 @@ def prepare_ec_private_key(
     return ec_private_key
 
 
-def derive_and_encrypt_key(
-    password: str, data: bytes, decrypt: bool, iv: bytes | None = None
-) -> tuple[bytes, bytes]:
+def derive_and_encrypt_key(password: str, data: bytes, decrypt: bool, iv: bytes | None = None) -> tuple[bytes, bytes]:
     """Derive an AES-256 key with PBKDF2 (salt=iv) and AES-CBC encrypt/decrypt."""
     import os
 
