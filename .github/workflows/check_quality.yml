@@ -43,7 +43,7 @@ jobs:
     container:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Ruff check
         run: ruff check
       - name: Ruff format
@@ -55,7 +55,7 @@ jobs:
     container:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: REUSE
         run: reuse lint
 
@@ -65,7 +65,7 @@ jobs:
     container:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Codespell
         run: >
           codespell . --check-filenames
@@ -81,7 +81,7 @@ jobs:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check for outdated dependencies
         run: |
@@ -99,7 +99,7 @@ jobs:
   version_check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Ensure version is referenced in CHANGELOG.md
         run: |
           VERSION=$(awk -F'"' '/^version = / {print $2; exit}' pyproject.toml)
@@ -119,7 +119,7 @@ jobs:
     container:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Pylint
         run: pylint --fail-under=9.4 keyutils_py
 
@@ -131,7 +131,7 @@ jobs:
     env:
       OQS_INSTALL_PATH: "/root/_oqs"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Unit tests
         run: python -m unittest discover -s tests
 
@@ -142,6 +142,6 @@ jobs:
     container:
       image: ${{ needs.prepare_env.outputs.image_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Pyright
         run: pyright
