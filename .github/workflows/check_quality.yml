@@ -10,8 +10,11 @@
 name: Check code quality
 
 on:
+  # A branch with an open pull request is checked by the pull_request run alone; a push run beside it would check the
+  # same commit a second time. A branch without a pull request is checked by hand:
+  #   gh workflow run check_quality.yml --ref <branch>
   push:
-    branches: [ "**" ]
+    branches: [ main ]
   pull_request:
     branches: [ "**" ]
   workflow_dispatch:
