@@ -74,14 +74,14 @@ jobs:
         run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Generate base image SBOM
-        uses: anchore/syft-action@v0.18.0
+        uses: anchore/sbom-action@v0.18.0
         with:
           image: ghcr.io/${{ env.REPO_OWNER_LC }}/keyutils-base:latest
           format: cyclonedx-json
           output-file: keyutils-base.sbom.json
 
       - name: Generate dev image SBOM
-        uses: anchore/syft-action@v0.18.0
+        uses: anchore/sbom-action@v0.18.0
         with:
           image: ghcr.io/${{ env.REPO_OWNER_LC }}/keyutils-dev:latest
           format: cyclonedx-json
