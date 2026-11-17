@@ -15,7 +15,7 @@ It only dispatches: the key type specific work stays in :class:`TradKeyFactory`,
 
 import base64
 import textwrap
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -196,7 +196,11 @@ class CombinedKeyFactory:
         :return: The loaded public key.
         """
         if isinstance(spki, bytes):
-            spki = decode_key_structure(spki, rfc5280.SubjectPublicKeyInfo(), "SubjectPublicKeyInfo")
+            # The decoder returns Any, which would leave ``spki`` typed as the union; name the decoded type.
+            decoded: rfc5280.SubjectPublicKeyInfo = decode_key_structure(
+                spki, rfc5280.SubjectPublicKeyInfo(), "SubjectPublicKeyInfo"
+            )
+            spki = decoded
 
         oid = spki["algorithm"]["algorithm"]
 
@@ -310,7 +314,7 @@ class CombinedKeyFactory:
             )
         elif isinstance(private_key, (TradPrivateKey, TradKEMPrivateKey)):
             der_data = TradKeyFactory.save_private_key_one_asym_key(
-                private_key=private_key,
+                private_key=cast(TradPrivateKey, private_key),  # the isinstance above; pyright does not narrow it
                 public_key=public_key,  # type: ignore[arg-type]
                 version=0 if version is None else version,
                 include_public_key=include_public_key,
