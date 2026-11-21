@@ -159,13 +159,16 @@ jobs:
           echo "$RUNNER_TEMP/devtools/bin" >> "$GITHUB_PATH"
       - name: Ruff
         if: ${{ !cancelled() }}
-        run: $VENV_DIR/bin/ruff check
+        run: |
+          "$VENV_DIR/bin/ruff" check
       - name: REUSE
         if: ${{ !cancelled() }}
-        run: $VENV_DIR/bin/reuse lint
+        run: |
+          "$VENV_DIR/bin/reuse" lint
       - name: Codespell
         if: ${{ !cancelled() }}
-        run: $VENV_DIR/bin/codespell .
+        run: |
+          "$VENV_DIR/bin/codespell" .
       - name: The version has a CHANGELOG entry
         if: ${{ !cancelled() }}
         run: release-metadata resolve-version --github-output /dev/null
@@ -197,7 +200,7 @@ jobs:
           fail-on-cache-miss: true
       - name: Check for outdated dependencies
         run: |
-          OUTDATED=$($VENV_DIR/bin/uv tree --outdated --depth 1)
+          OUTDATED=$("$VENV_DIR/bin/uv" tree --outdated --depth 1)
           if echo "$OUTDATED" | grep -q 'latest:'; then
             echo "Outdated packages detected, think about it:"
             echo "$OUTDATED"
@@ -221,7 +224,8 @@ jobs:
           key: ${{ needs.setup_env.outputs.cache-key }}
           fail-on-cache-miss: true
       - name: Pylint
-        run: $VENV_DIR/bin/pylint --fail-under=${{ inputs.pylint-fail-under }} ${{ inputs.pylint-paths }}
+        run: |
+          "$VENV_DIR/bin/pylint" --fail-under=${{ inputs.pylint-fail-under }} ${{ inputs.pylint-paths }}
 
   unit_test:
     needs: [setup_env, checks]
@@ -256,7 +260,8 @@ jobs:
           key: ${{ needs.setup_env.outputs.cache-key }}
           fail-on-cache-miss: true
       - name: Pyright
-        run: $VENV_DIR/bin/pyright
+        run: |
+          "$VENV_DIR/bin/pyright"
 
   sbom:
     if: inputs.sbom-command != ''
@@ -297,7 +302,8 @@ jobs:
           key: ${{ needs.setup_env.outputs.cache-key }}
           fail-on-cache-miss: true
       - name: Robocop
-        run: $VENV_DIR/bin/robocop check
+        run: |
+          "$VENV_DIR/bin/robocop" check
 
   rf_dry_run:
     # Finds unknown keywords and wrong arguments without a system under test.

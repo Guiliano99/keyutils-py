@@ -34,7 +34,7 @@ jobs:
         id: setenv
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "image_url=ghcr.io/${OWNER_LC}/keyutils-dev:latest" >> $GITHUB_OUTPUT
+          echo "image_url=ghcr.io/${OWNER_LC}/keyutils-dev:latest" >> "$GITHUB_OUTPUT"
 
   # ---------- Stage 1 (fast checks) ----------
   ruff_lint:
