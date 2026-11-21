@@ -133,6 +133,21 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests
 
+  devtools_test:
+    # pkix-devtools/ does not depend on keyutils-py, so its tests run on a plain Python, without the liboqs image.
+    needs: [ruff_lint, license_check, spelling_check]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install pkix-devtools
+        run: python -m pip install "./pkix-devtools[sbom]"
+      - name: Unit tests of pkix-devtools
+        working-directory: pkix-devtools
+        run: python -m unittest discover -s tests
+
   type_check:
     needs: prepare_env
     runs-on: ubuntu-24.04
