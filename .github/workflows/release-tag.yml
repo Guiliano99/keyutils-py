@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reusable: create the annotated tag vX.Y.Z of the version in pyproject.toml, which needs a `# X.Y.Z` CHANGELOG heading.
+# The caller starts it by hand and grants `contents: write`:
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         version: {type: string, required: false}
+#   permissions:
+#     contents: write
+#   jobs:
+#     tag:
+#       uses: Guiliano99/keyutils-py/.github/workflows/release-tag.yml@<ref>
+#       with:
+#         devtools-ref: <ref>
+#         version: ${{ inputs.version }}
+name: Release tag (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      devtools-ref:
+        description: "The ref of keyutils-py to install pkix-devtools from, the one in `uses:`"
+        type: string
+        required: true
+      version:
+        description: "Optional; must equal the version in pyproject.toml"
+        type: string
+        default: ""
+
+jobs:
+  tag_release:
+    name: Create annotated Git tag from project version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install pkix-devtools
+        run: |
+          python -m pip install --quiet \
+            "pkix-devtools @ git+https://github.com/Guiliano99/keyutils-py.git@${{ inputs.devtools-ref }}#subdirectory=pkix-devtools"
+      - name: Resolve target version
+        id: target_version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: release-metadata resolve-version --input-version "$INPUT_VERSION"
+      - name: Ensure the release tag does not already exist
+        env:
+          TAG_NAME: ${{ steps.target_version.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists locally."
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$TAG_NAME" | grep -q "$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists on origin."
+            exit 1
+          fi
+      - name: Create and push the annotated tag
+        env:
+          TAG_NAME: ${{ steps.target_version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+          git push origin "$TAG_NAME"

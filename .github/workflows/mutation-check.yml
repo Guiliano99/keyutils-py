@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reusable: the mutation check of a test suite, which injects every defect of its reference implementation and checks
+# that a test of the requirement items the defect violates fails. Many suite runs, so callers schedule it:
+#
+#   on:
+#     workflow_dispatch:
+#     schedule:
+#       - cron: "17 4 * * 1"
+#   jobs:
+#     mutation:
+#       uses: Guiliano99/keyutils-py/.github/workflows/mutation-check.yml@<ref>
+#       with:
+#         command: make mutation-check
+#       secrets:
+#         PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+name: Mutation check (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.13"
+      runner:
+        type: string
+        default: ubuntu-24.04
+      install-command:
+        type: string
+        default: uv sync --frozen
+      command:
+        type: string
+        default: make mutation-check
+      report:
+        description: "The matrix to upload"
+        type: string
+        default: reports/mutation_matrix.md
+    secrets:
+      PKIXUTILS_DEPLOY_KEY:
+        required: false
+
+jobs:
+  mutation_check:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Let git read the private pkixutils-py repository
+        env:
+          PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+        run: |
+          if [ -z "$PKIXUTILS_DEPLOY_KEY" ]; then echo "No deploy key given; pkixutils-py is read over HTTPS."; exit 0; fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PKIXUTILS_DEPLOY_KEY" > ~/.ssh/pkixutils_deploy
+          chmod 600 ~/.ssh/pkixutils_deploy
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+          git config --global url."git@github.com:Guiliano99/pkixutils-py.git".insteadOf "https://github.com/Guiliano99/pkixutils-py.git"
+          echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/pkixutils_deploy -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+      - name: Install the dependencies
+        run: |
+          pip install --upgrade uv
+          ${{ inputs.install-command }}
+      - name: Inject every defect
+        run: ${{ inputs.command }}
+      - name: Upload the matrix
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-matrix
+          path: ${{ inputs.report }}
