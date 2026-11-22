@@ -42,6 +42,7 @@ get_hash_from_oid
 get_key_name
 get_sig_alg_info
 id_alg_PWRI_KEK
+is_public_key_oid
 kdf_derive
 list_algorithms
 load_private_key_from_file

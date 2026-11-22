@@ -183,6 +183,14 @@ SPDX-License-Identifier: Apache-2.0 -->
   the signature's hashAlgorithm and MGF1 hash must equal the key's and its saltLength must be greater or equal
   (Section 3.3 case 3, `BadSigAlgIDParams` otherwise). Absent fields are compared as their DEFAULT values. An
   `rsaEncryption` key or an `id-RSASSA-PSS` key without parameters needs no parameter validation (cases 1 and 2).
+- `is_public_key_oid(oid)`, exported from `keyutils_py` (`keyutils_py.keyutils`), tells whether an OID (an
+  `ObjectIdentifier` or its dotted string) is the algorithm of a SubjectPublicKeyInfo that `load_public_key_from_spki`
+  loads. It reads the tables the loader dispatches on, so a consumer needs no copy of them: `True` for `rsaEncryption`,
+  `id-RSASSA-PSS`, `id-ecPublicKey`, Ed25519, Ed448, X25519, X448, DSA, DH (`dhpublicnumber` and `dhKeyAgreement`),
+  RSA-KEM, ML-DSA, ML-KEM, SLH-DSA, Falcon, FrodoKEM, McEliece, sntrup761, HSS, XMSS and XMSS^MT, the composite
+  signatures and KEMs, Chempat and X-Wing. `False` for signature algorithms (`sha256WithRSAEncryption`,
+  `ecdsa-with-SHA256`, the SHAKE RSASSA-PSS identifiers), hashes, `id-ecDH`, `id-ecMQV` and unknown OIDs. The HashML-DSA
+  and HashSLH-DSA identifiers answer `True`, because the loader reads them as the pure key. It needs no `liboqs`.
 
 ## Changed
 

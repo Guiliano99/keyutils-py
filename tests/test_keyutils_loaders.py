@@ -15,6 +15,7 @@ from keyutils_py import (
     compute_encaps,
     encode_to_der,
     generate_key,
+    is_public_key_oid,
     load_private_key_from_one_asym_key,
     load_public_key_from_spki,
     prepare_spki,
@@ -26,14 +27,30 @@ from keyutils_py.keys.chempat_key import ChempatPublicKey
 from keyutils_py.keys.trad_keys import DSAPrivateKey
 from keyutils_py.keyutils import prepare_alg_id, prepare_sig_alg_id
 from keyutils_py.oids import (
+    CHEMPAT_NAME_2_OID,
+    COMPOSITE_KEM_NAME_2_OID,
+    COMPOSITE_SIG_NAME_TO_OID,
+    DSA_OID_2_NAME,
+    ECDSA_OID_2_NAME,
+    FALCON_NAME_2_OID,
+    FRODOKEM_NAME_2_OID,
+    MCELIECE_NAME_2_OID,
+    ML_DSA_NAME_2_OID,
+    ML_KEM_NAME_2_OID,
+    PQ_KEM_NAME_2_OID,
     PQ_NAME_2_OID,
+    PQ_STATEFUL_HASH_SIG_NAME_2_OID,
+    RSA_OID_2_NAME,
     SLH_DSA_NAME_2_OID,
     SLH_DSA_PRE_HASH_NAME_2_OID,
+    XWING_OID_STR,
     get_hash_from_oid,
+    id_ml_dsa_44_with_sha512,
+    id_rsa_kem_spki,
 )
-from keyutils_py.utils import load_and_decode_pem_file, try_decode_pyasn1
+from keyutils_py.utils import OQS_AVAILABLE, load_and_decode_pem_file, try_decode_pyasn1
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc5280, rfc5958
+from pyasn1_alt_modules import rfc3279, rfc5280, rfc5480, rfc5958, rfc9481
 
 
 def _spki_der(public_key) -> bytes:
@@ -201,6 +218,119 @@ class TestChempatRoundTrip(unittest.TestCase):
             with self.subTest(length=len(data)):
                 with self.assertRaises(InvalidKeyData):
                     ChempatPublicKey.from_public_bytes(data, name)
+
+
+# PKCS #3 dhKeyAgreement: the second DH identifier that the loader knows, next to X9.42 dhpublicnumber.
+_DH_KEY_AGREEMENT = univ.ObjectIdentifier("1.2.840.113549.1.3.1")
+
+# The key algorithms of a SubjectPublicKeyInfo by family; the OIDs of the post-quantum and hybrid families are
+# those of the tables of keyutils.
+_KEY_OIDS_BY_FAMILY = {
+    "rsaEncryption": [rfc9481.rsaEncryption],
+    "id-RSASSA-PSS": [rfc9481.id_RSASSA_PSS],
+    "EC": [rfc5480.id_ecPublicKey],
+    "EdDSA": [rfc9481.id_Ed25519, rfc9481.id_Ed448],
+    "XDH": [rfc9481.id_X25519, rfc9481.id_X448],
+    "DSA": [rfc5480.id_dsa],
+    "DH": [rfc3279.dhpublicnumber, _DH_KEY_AGREEMENT],
+    "RSA-KEM": [id_rsa_kem_spki],
+    "ML-DSA": list(ML_DSA_NAME_2_OID.values()),
+    "ML-KEM": list(ML_KEM_NAME_2_OID.values()),
+    "SLH-DSA": list(SLH_DSA_NAME_2_OID.values()),
+    "Falcon": list(FALCON_NAME_2_OID.values()),
+    "FrodoKEM": list(FRODOKEM_NAME_2_OID.values()),
+    "McEliece": list(MCELIECE_NAME_2_OID.values()),
+    "sntrup761": [PQ_KEM_NAME_2_OID["sntrup761"]],
+    "stateful hash-based": list(PQ_STATEFUL_HASH_SIG_NAME_2_OID.values()),
+    "composite signature": list(COMPOSITE_SIG_NAME_TO_OID.values()),
+    "composite KEM": list(COMPOSITE_KEM_NAME_2_OID.values()),
+    "Chempat": list(CHEMPAT_NAME_2_OID.values()),
+    "X-Wing": [XWING_OID_STR],
+}
+
+
+class TestIsPublicKeyOid(unittest.TestCase):
+    """``is_public_key_oid`` is ``True`` exactly for the OIDs that ``load_public_key_from_spki`` takes as a key."""
+
+    def test_every_key_family_is_a_public_key_oid(self):
+        """GIVEN the OIDs of each key family / WHEN asked / THEN every one is a public key OID, as OID and as str."""
+        for family, oids in _KEY_OIDS_BY_FAMILY.items():
+            with self.subTest(family=family):
+                self.assertTrue(oids)
+                for oid in oids:
+                    self.assertTrue(is_public_key_oid(oid), str(oid))
+                    self.assertTrue(is_public_key_oid(str(oid)), str(oid))
+
+    def test_signature_algorithms_are_no_public_key_oids(self):
+        """GIVEN signature, hash and unsupported key agreement OIDs / WHEN asked / THEN none is a public key OID."""
+        oids = [
+            *RSA_OID_2_NAME,  # sha256WithRSAEncryption, ...
+            *ECDSA_OID_2_NAME,
+            *DSA_OID_2_NAME,
+            rfc9481.id_RSASSA_PSS_SHAKE128,  # RFC 8702: the key is rsaEncryption or id-RSASSA-PSS
+            rfc9481.id_RSASSA_PSS_SHAKE256,
+            rfc9481.id_sha256,
+            rfc5480.id_ecDH,  # the loader does not know it
+            rfc5480.id_ecMQV,
+        ]
+        for oid in oids:
+            with self.subTest(oid=str(oid)):
+                self.assertFalse(is_public_key_oid(oid))
+                self.assertFalse(is_public_key_oid(str(oid)))
+
+    def test_unknown_oid_is_no_public_key_oid(self):
+        """GIVEN an OID of no table / WHEN asked / THEN False, and the loader raises BadAlg for it."""
+        oid = univ.ObjectIdentifier("1.2.3.4.5.99")
+        self.assertFalse(is_public_key_oid(oid))
+        spki = prepare_spki(generate_key("ml-dsa-44").public_key())
+        spki["algorithm"]["algorithm"] = oid
+        with self.assertRaises(BadAlg):
+            load_public_key_from_spki(spki)
+
+    def test_the_oid_of_a_generated_key_is_a_public_key_oid(self):
+        """GIVEN a fresh key of each family that needs no liboqs / WHEN its SPKI is prepared / THEN its OID is one."""
+        names = (
+            "rsa",
+            "ecdsa",
+            "ed25519",
+            "ed448",
+            "x25519",
+            "x448",
+            "dsa",
+            "dh",
+            "rsa-kem",
+            "ml-dsa-44",
+            "ml-kem-512",
+            "slh-dsa-sha2-128s",
+            "hss",
+            "composite-sig-ml-dsa-44-ecdsa-secp256r1",
+            "composite-kem-ml-kem-768-ecdh-secp256r1",
+            "chempat-ml-kem-768-x25519",
+            "xwing",
+        )
+        for name in names:
+            with self.subTest(key=name):
+                spki = prepare_spki(generate_key(name).public_key())
+                self.assertTrue(is_public_key_oid(spki["algorithm"]["algorithm"]))
+        pss_spki = prepare_spki(generate_key("rsa").public_key(), use_rsa_pss=True)
+        self.assertEqual(pss_spki["algorithm"]["algorithm"], rfc9481.id_RSASSA_PSS)
+        self.assertTrue(is_public_key_oid(pss_spki["algorithm"]["algorithm"]))
+
+    @unittest.skipUnless(OQS_AVAILABLE, "liboqs not installed; oqs-only tests skipped")
+    def test_the_oid_of_a_generated_oqs_only_key_is_a_public_key_oid(self):
+        """GIVEN a fresh Falcon, McEliece, sntrup761 and XMSS key / WHEN its SPKI is prepared / THEN its OID is one."""
+        for name in ("falcon-512", "mceliece-348864", "sntrup761", "xmss"):
+            with self.subTest(key=name):
+                spki = prepare_spki(generate_key(name).public_key())
+                self.assertTrue(is_public_key_oid(spki["algorithm"]["algorithm"]))
+
+    def test_hash_ml_dsa_identifier_is_read_by_the_loader_as_the_pure_key(self):
+        """GIVEN an ML-DSA SPKI with the HashML-DSA OID / WHEN loaded / THEN it loads, so the OID is a key OID."""
+        pub = generate_key("ml-dsa-44").public_key()
+        spki = prepare_spki(pub)
+        spki["algorithm"]["algorithm"] = id_ml_dsa_44_with_sha512
+        self.assertEqual(_spki_der(load_public_key_from_spki(spki)), _spki_der(pub))
+        self.assertTrue(is_public_key_oid(id_ml_dsa_44_with_sha512))
 
 
 if __name__ == "__main__":
