@@ -83,6 +83,7 @@ from keyutils_py.oids import (
     KEY_CLASS_MAPPING,
     MCELIECE_NAME_2_OID,
     ML_DSA_NAME_2_OID,
+    ML_DSA_PRE_HASH_OID_2_NAME,
     ML_KEM_NAME_2_OID,
     PQ_NAME_2_OID,
     PQ_OID_2_NAME,
@@ -793,24 +794,38 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
 
 
 def is_public_key_oid(oid: Union[str, univ.ObjectIdentifier]) -> bool:
-    """Tell whether ``oid`` is the algorithm of a ``SubjectPublicKeyInfo`` that the loader accepts.
+    """Tell whether ``oid`` is the algorithm of a ``SubjectPublicKeyInfo`` that a certificate may carry.
 
     The answer is read from the tables that :func:`load_public_key_from_spki` dispatches on, so it cannot drift from
-    it. It is ``True`` for the traditional key algorithms (``rsaEncryption``, ``id-RSASSA-PSS``, ``id-ecPublicKey``,
-    Ed25519, Ed448, X25519, X448, DSA, DH as ``dhpublicnumber`` and as ``dhKeyAgreement``), RSA-KEM, ML-DSA, ML-KEM,
-    SLH-DSA, Falcon, FrodoKEM, McEliece, sntrup761, the stateful hash-based signatures (HSS, XMSS, XMSS^MT), the
-    composite signatures and KEMs, Chempat and X-Wing. The HashML-DSA and HashSLH-DSA identifiers are signature
-    identifiers, but the loader reads them as the pure key, so they answer ``True``. It is ``False`` for every other
-    OID: a signature algorithm such as ``sha256WithRSAEncryption`` or ``ecdsa-with-SHA256``, a hash, ``id-ecDH`` and
-    ``id-ecMQV`` (which the loader does not know) and an unknown OID.
+    it, with one exception: the loader is more tolerant than RFC 9881. It is ``True`` for the traditional key
+    algorithms (``rsaEncryption``, ``id-RSASSA-PSS``, ``id-ecPublicKey``, Ed25519, Ed448, X25519, X448, DSA, DH as
+    ``dhpublicnumber`` and as ``dhKeyAgreement``), RSA-KEM, ML-DSA, ML-KEM, SLH-DSA, Falcon, FrodoKEM, McEliece,
+    sntrup761, the stateful hash-based signatures (HSS, XMSS, XMSS^MT), the composite signatures and KEMs, Chempat and
+    X-Wing.
+
+    The HashSLH-DSA identifiers (``id-hash-slh-dsa-*``) are public key identifiers and answer ``True``: RFC 9909
+    Section 5 says "The AlgorithmIdentifier for an SLH-DSA public key MUST use one of the id-slh-dsa-* or
+    id-hash-slh-dsa-* object identifiers from Section 3", and Section 8 that "SLH-DSA uses the same OID to identify a
+    public key and a signature algorithm".
+
+    The HashML-DSA identifiers (``id-hash-ml-dsa-*-with-sha512``) answer ``False``, although the loader reads them as
+    the pure key. RFC 9881 Section 8.3 says they are not a public key algorithm of a certificate: "public keys
+    identified by id-hash-ml-dsa-44-with-sha512, id-hash-ml-dsa-65-with-sha512, and id-hash-ml-dsa-87-with-sha512 MUST
+    NOT be in X.509 certificates used for CRLs, OCSP, certificate issuance, and related PKIX protocols". They are
+    signature algorithm identifiers only.
+
+    It is ``False`` for every other OID too: a signature algorithm such as ``sha256WithRSAEncryption`` or
+    ``ecdsa-with-SHA256``, a hash, ``id-ecDH`` and ``id-ecMQV`` (which the loader does not know) and an unknown OID.
 
     The parameters are not looked at, and ``liboqs`` is not needed: a key that needs it makes the loader raise
     :class:`MissingOQSDependencyError`, but its OID is still a key OID.
 
     :param oid: The OID or its dotted string.
-    :return: ``True`` if the loader accepts ``oid`` as the algorithm of a public key.
+    :return: ``True`` if ``oid`` is the algorithm of a public key that the loader accepts and RFCs allow.
     """
     oid = univ.ObjectIdentifier(str(oid))
+    if oid in ML_DSA_PRE_HASH_OID_2_NAME:  # RFC 9881 Section 8.3: HashML-DSA is no public key algorithm
+        return False
     return (
         TradKeyFactory.is_trad_oid(oid)
         or oid in (rfc9481.id_RSASSA_PSS, id_rsa_kem_spki)

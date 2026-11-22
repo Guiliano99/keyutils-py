@@ -36,6 +36,7 @@ from keyutils_py.oids import (
     FRODOKEM_NAME_2_OID,
     MCELIECE_NAME_2_OID,
     ML_DSA_NAME_2_OID,
+    ML_DSA_PRE_HASH_OID_2_NAME,
     ML_KEM_NAME_2_OID,
     PQ_KEM_NAME_2_OID,
     PQ_NAME_2_OID,
@@ -224,7 +225,8 @@ class TestChempatRoundTrip(unittest.TestCase):
 _DH_KEY_AGREEMENT = univ.ObjectIdentifier("1.2.840.113549.1.3.1")
 
 # The key algorithms of a SubjectPublicKeyInfo by family; the OIDs of the post-quantum and hybrid families are
-# those of the tables of keyutils.
+# those of the tables of keyutils. The HashML-DSA identifiers are left out of "ML-DSA" (RFC 9881 Section 8.3), the
+# HashSLH-DSA identifiers stay in "SLH-DSA" (RFC 9909 Section 5).
 _KEY_OIDS_BY_FAMILY = {
     "rsaEncryption": [rfc9481.rsaEncryption],
     "id-RSASSA-PSS": [rfc9481.id_RSASSA_PSS],
@@ -234,7 +236,7 @@ _KEY_OIDS_BY_FAMILY = {
     "DSA": [rfc5480.id_dsa],
     "DH": [rfc3279.dhpublicnumber, _DH_KEY_AGREEMENT],
     "RSA-KEM": [id_rsa_kem_spki],
-    "ML-DSA": list(ML_DSA_NAME_2_OID.values()),
+    "ML-DSA": [oid for oid in ML_DSA_NAME_2_OID.values() if oid not in ML_DSA_PRE_HASH_OID_2_NAME],
     "ML-KEM": list(ML_KEM_NAME_2_OID.values()),
     "SLH-DSA": list(SLH_DSA_NAME_2_OID.values()),
     "Falcon": list(FALCON_NAME_2_OID.values()),
@@ -250,7 +252,7 @@ _KEY_OIDS_BY_FAMILY = {
 
 
 class TestIsPublicKeyOid(unittest.TestCase):
-    """``is_public_key_oid`` is ``True`` exactly for the OIDs that ``load_public_key_from_spki`` takes as a key."""
+    """``is_public_key_oid`` is ``True`` for the OIDs that ``load_public_key_from_spki`` takes as a key, not HashML-DSA."""
 
     def test_every_key_family_is_a_public_key_oid(self):
         """GIVEN the OIDs of each key family / WHEN asked / THEN every one is a public key OID, as OID and as str."""
@@ -324,13 +326,36 @@ class TestIsPublicKeyOid(unittest.TestCase):
                 spki = prepare_spki(generate_key(name).public_key())
                 self.assertTrue(is_public_key_oid(spki["algorithm"]["algorithm"]))
 
-    def test_hash_ml_dsa_identifier_is_read_by_the_loader_as_the_pure_key(self):
-        """GIVEN an ML-DSA SPKI with the HashML-DSA OID / WHEN loaded / THEN it loads, so the OID is a key OID."""
+    def test_hash_ml_dsa_identifiers_are_no_public_key_oids_although_the_loader_reads_them(self):
+        """GIVEN the HashML-DSA OIDs / WHEN asked / THEN none is a public key OID (RFC 9881 Section 8.3).
+
+        The RFC says: "public keys identified by id-hash-ml-dsa-44-with-sha512, id-hash-ml-dsa-65-with-sha512, and
+        id-hash-ml-dsa-87-with-sha512 MUST NOT be in X.509 certificates used for CRLs, OCSP, certificate issuance,
+        and related PKIX protocols". The loader still reads such an SPKI as the pure key, so a consumer that must
+        not accept it asks ``is_public_key_oid`` first.
+        """
+        self.assertEqual(len(ML_DSA_PRE_HASH_OID_2_NAME), 3)
+        for oid in ML_DSA_PRE_HASH_OID_2_NAME:
+            with self.subTest(oid=str(oid)):
+                self.assertFalse(is_public_key_oid(oid))
+                self.assertFalse(is_public_key_oid(str(oid)))
         pub = generate_key("ml-dsa-44").public_key()
         spki = prepare_spki(pub)
         spki["algorithm"]["algorithm"] = id_ml_dsa_44_with_sha512
         self.assertEqual(_spki_der(load_public_key_from_spki(spki)), _spki_der(pub))
-        self.assertTrue(is_public_key_oid(id_ml_dsa_44_with_sha512))
+
+    def test_hash_slh_dsa_identifiers_are_public_key_oids(self):
+        """GIVEN the HashSLH-DSA OIDs / WHEN asked / THEN every one is a public key OID (RFC 9909 Section 5).
+
+        The RFC says: "The AlgorithmIdentifier for an SLH-DSA public key MUST use one of the id-slh-dsa-* or
+        id-hash-slh-dsa-* object identifiers from Section 3", and Section 8: "SLH-DSA uses the same OID to identify
+        a public key and a signature algorithm". Unlike RFC 9881 for ML-DSA, it does not exclude HashSLH-DSA.
+        """
+        self.assertEqual(len(SLH_DSA_PRE_HASH_NAME_2_OID), 12)
+        for oid in SLH_DSA_PRE_HASH_NAME_2_OID.values():
+            with self.subTest(oid=str(oid)):
+                self.assertTrue(is_public_key_oid(oid))
+                self.assertTrue(is_public_key_oid(str(oid)))
 
 
 if __name__ == "__main__":
