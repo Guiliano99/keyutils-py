@@ -46,6 +46,7 @@ Public top-level surface (most callers stop here)::
         load_private_key_from_one_asym_key,  # keyutils
         load_public_key_from_spki,  # keyutils
         check_consistency_sig_alg_id_and_key,  # keyutils
+        check_consistency_sig_alg_id_and_spki,  # keyutils
         prepare_spki,  # keyutils
     )
 
@@ -102,6 +103,7 @@ from keyutils_py.exceptions import (
 )
 from keyutils_py.keyutils import (
     check_consistency_sig_alg_id_and_key,
+    check_consistency_sig_alg_id_and_spki,
     generate_key,
     get_key_name,
     load_private_key_from_file,
@@ -214,6 +216,7 @@ __all__ = [
     "load_private_key_from_one_asym_key",
     "load_public_key_from_spki",
     "check_consistency_sig_alg_id_and_key",
+    "check_consistency_sig_alg_id_and_spki",
     # Key types
     "PublicKey",
     "SignKey",

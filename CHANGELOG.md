@@ -176,6 +176,13 @@ SPDX-License-Identifier: Apache-2.0 -->
 - `keyutils_py.oids.id_alg_PWRI_KEK`, exported from `keyutils_py`: `1.2.840.113549.1.9.16.3.9`, the key wrap of a
   password recipient (RFC 3211 Section 2.3), built on the `id-alg` arc of `rfc9688`. No pyasn1-alt-modules module has
   it. It is a constant only; no mechanism computes the key wrap.
+- `check_consistency_sig_alg_id_and_spki(alg_id, spki)`, exported from `keyutils_py`, checks a signature
+  AlgorithmIdentifier against a SubjectPublicKeyInfo. It runs `check_consistency_sig_alg_id_and_key` on the loaded
+  key and then applies RFC 4055 to an `id-RSASSA-PSS` SPKI, whose RSASSA-PSS-params the loaded key no longer has:
+  such a key is used for RSASSA-PSS only (Section 1.2, `BadSigAlgID` otherwise), and when the SPKI has parameters,
+  the signature's hashAlgorithm and MGF1 hash must equal the key's and its saltLength must be greater or equal
+  (Section 3.3 case 3, `BadSigAlgIDParams` otherwise). Absent fields are compared as their DEFAULT values. An
+  `rsaEncryption` key or an `id-RSASSA-PSS` key without parameters needs no parameter validation (cases 1 and 2).
 
 ## Changed
 
