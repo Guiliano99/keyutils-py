@@ -173,7 +173,10 @@ of at least 128 bits, at most 25 000 000 blocks of PBKDF2 work) are constants of
 The functions of `keyutils_py.primitives` (`hkdf`, `kdf2`, `kdf3`, `pbkdf2`, `hmac_digest`, `kmac`, `gmac`,
 `aes_kw_wrap`, `aes_cbc_encrypt`, ...) take the name of the hash and plain bytes, no identifier, and have no limits.
 The module is importable but not public API: a test uses it to make what the functions above refuse on purpose (a KEK
-that does not fit the OID, a one octet PBMAC1 key) and to check them against an independent computation.
+that does not fit the OID, a one octet PBMAC1 key) and to check them against an independent computation. One pair is
+the exception: `aes_cbc_encrypt_no_padding` and `aes_cbc_decrypt_no_padding` are exported from `keyutils_py`, for
+key-wrap constructions that pad on their own and are built outside keyutils, such as id-alg-PWRI-KEK (RFC 3211
+Section 2.3).
 
 ### 8. Estimate security strength
 

@@ -14,7 +14,7 @@ Three layers, imports going down only:
   RFCs by `tests/golden/generate_alg_tables.py`, not from the code) and a CHANGELOG line.
 - `keyutils_py/primitives.py`: keyless functions by the name of the hash, on plain bytes. No identifier, no OID, no table;
   it imports `cryptography`, `pycryptodome` and `keyutils_py.exceptions` only (an `ast` test). Importable, not in
-  `__all__`, not in the API snapshot.
+  `__all__`, not in the API snapshot (one pair is the exception, see the amendment of 2026-11-22).
 - `keyutils_py/mechanisms.py`: `make_alg_id`, `kdf_derive`, `compute_mac`, `verify_mac`, `mac_key_length`, `wrap_cek`,
   `unwrap_cek`, `wrap_key_length`, `encrypt_content`, `decrypt_content`. They look the OID up in the rows, read and check
   the parameters, and call the function of the lower layer.
@@ -25,7 +25,8 @@ Decisions, with their reason:
   of a few mechanisms (key agreement, KEM, password, key transport, MAC), so a consumer needs the resolution, and a public
   primitive would leave it to redo that. The lower layer stays importable because negative tests need unchecked access: a
   key wrap whose KEK does not fit the OID that is written next to it, a one octet PBMAC1 key, a KMAC output below the
-  limit. A name that a second suite needs is promoted by a row or a mechanism, not by exporting the function.
+  limit. A name that a second suite needs is promoted by a row or a mechanism, not by exporting the function
+  (one exception, see the amendment of 2026-11-22).
 - Mechanisms are strict receivers. An OID in no table is `BadAlg`; parameters that are absent, present where they must be
   absent, or inconsistent with the OID or the other arguments are `BadAlgParams` (trailing data included); parameters that
   do not decode are `BadAsn1Data`; a value that does not verify is `IntegrityError` with one message, so that a wrong
@@ -55,3 +56,19 @@ Decisions, with their reason:
 Alternatives rejected: a public by-name primitive layer next to the mechanisms (each consumer would resolve identifiers
 again), a spec object per algorithm that is passed around (a second public type for what the row already says), and a
 `strict` flag on the mechanisms (a switch keeps the misreading it was meant to remove alive).
+
+## Amendment 2026-11-22: the unpadded AES-CBC pair is public
+
+`aes_cbc_encrypt_no_padding` and `aes_cbc_decrypt_no_padding` of `keyutils_py.primitives` are exported from `keyutils_py`
+(in `__all__` and in the API snapshot). This is an exception to the second decision above, which keeps the primitives
+private and promotes a needed name by a row or a mechanism. The decision itself stands for every other function of the
+lower layer.
+
+Reason: a key-wrap construction that pads on its own, such as id-alg-PWRI-KEK (RFC 3211 Section 2.3), formats the CEK
+with random padding (not PKCS #5) and runs CBC twice, the second time over its own output with the last ciphertext block
+as IV. `encrypt_content` pads, so it cannot be used, and no mechanism is the right place for it: the construction is built
+outside keyutils, and the identifier is a constant (`id_alg_PWRI_KEK`) only. Promoting it by a mechanism would add a
+mechanism that nothing in keyutils calls; the pair has no table row to read and no parameter to check, so a consumer
+loses nothing by taking the bare function. The pair still takes no identifier and no OID, and still raises `ValueError`
+for a key that is not 16, 24 or 32 octets, an IV that is not 16 octets, and data that is empty or no multiple of 16
+octets.
