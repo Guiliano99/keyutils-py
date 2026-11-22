@@ -51,7 +51,7 @@ from keyutils_py.oids import (
 )
 from keyutils_py.utils import OQS_AVAILABLE, load_and_decode_pem_file, try_decode_pyasn1
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc3279, rfc5280, rfc5480, rfc5958, rfc9481
+from pyasn1_alt_modules import rfc3279, rfc5280, rfc5480, rfc5958, rfc8017, rfc9481
 
 
 def _spki_der(public_key) -> bytes:
@@ -141,6 +141,45 @@ class TestLoadPublicKeyFromSpki(unittest.TestCase):
                     with self.assertRaises(BadAlg) as caught:
                         load_public_key_from_spki(data)
                     self.assertIsInstance(caught.exception.__cause__, UnsupportedAlgorithm)
+
+
+    def test_key_data_of_the_wrong_form_raises_invalid_key_data(self):
+        """GIVEN SPKIs of EC, Ed25519, Ed448 and RSA keys whose key bits are wrong (a point off the curve or of the wrong
+        length or empty, a key of the wrong length, a malformed RSAPublicKey, an exponent of 1) / WHEN loaded as an
+        object and as DER / THEN InvalidKeyData, caused by the ValueError of `cryptography`, not a bare ValueError.
+        """
+        ec_der = _spki_der(TradKeyFactory.generate_trad_key("ecdsa").public_key())
+        ec_spki, _ = try_decode_pyasn1(ec_der, rfc5280.SubjectPublicKeyInfo())
+        point = ec_spki["subjectPublicKey"].asOctets()
+        rsa_spki, _ = try_decode_pyasn1(
+            _spki_der(TradKeyFactory.generate_trad_key("rsa").public_key()), rfc5280.SubjectPublicKeyInfo()
+        )
+        rsa_public_key, _ = try_decode_pyasn1(rsa_spki["subjectPublicKey"].asOctets(), rfc8017.RSAPublicKey())
+        rsa_public_key["publicExponent"] = 1
+        ed25519_spki, _ = try_decode_pyasn1(
+            _spki_der(TradKeyFactory.generate_trad_key("ed25519").public_key()), rfc5280.SubjectPublicKeyInfo()
+        )
+        ed448_spki, _ = try_decode_pyasn1(
+            _spki_der(TradKeyFactory.generate_trad_key("ed448").public_key()), rfc5280.SubjectPublicKeyInfo()
+        )
+        cases = (
+            ("EC point off the curve", ec_spki, point[:-1] + bytes([point[-1] ^ 1])),
+            ("EC point of 10 octets", ec_spki, point[:10]),
+            ("empty EC point", ec_spki, b""),
+            ("Ed25519 key of 31 octets", ed25519_spki, bytes(31)),
+            ("Ed448 key of 10 octets", ed448_spki, bytes(10)),
+            ("RSAPublicKey of 5 octets", rsa_spki, bytes(5)),
+            ("empty RSAPublicKey", rsa_spki, b""),
+            ("RSA exponent 1", rsa_spki, encode_to_der(rsa_public_key)),
+        )
+        for name, spki, key_bits in cases:
+            broken = try_decode_pyasn1(encode_to_der(spki), rfc5280.SubjectPublicKeyInfo())[0]
+            broken["subjectPublicKey"] = univ.BitString.fromOctetString(key_bits)
+            for data in (broken, encode_to_der(broken)):
+                with self.subTest(name=name, type=type(data).__name__):
+                    with self.assertRaises(InvalidKeyData) as caught:
+                        load_public_key_from_spki(data)
+                    self.assertIsInstance(caught.exception.__cause__, ValueError)
 
 
 class TestCheckConsistency(unittest.TestCase):

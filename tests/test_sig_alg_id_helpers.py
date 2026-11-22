@@ -19,7 +19,7 @@ from keyutils_py import (
     validate_sig_alg_id,
     verify_signature_with_alg_id,
 )
-from keyutils_py.exceptions import BadAlg, BadSigAlgID, BadSigAlgIDParams
+from keyutils_py.exceptions import BadAlg, BadSigAlgID, BadSigAlgIDParams, InvalidKeyData
 from keyutils_py.keyutils import (
     _has_explicit_pss_default,
     prepare_alg_id,
@@ -257,8 +257,8 @@ class TestCheckConsistencySpki(unittest.TestCase):
 
     def test_explicit_default_in_the_key_parameters_is_bad_sig_alg_id_params(self):
         """GIVEN a PSS SPKI whose parameters encode the DEFAULT values explicitly (not DER), as built and as DER /
-        WHEN checked against a matching PSS identifier / THEN BadSigAlgIDParams chained to the loader's ValueError,
-        and not that bare ValueError (RFC 4055 Section 3.1 leaves a DEFAULT out of the generated encoding).
+        WHEN checked against a matching PSS identifier / THEN BadSigAlgIDParams chained to the loader's InvalidKeyData,
+        and not that InvalidKeyData (RFC 4055 Section 3.1 leaves a DEFAULT out of the generated encoding).
         """
         explicit = _explicit_default_pss_params()
         sig_alg_id = _alg_id(rfc9481.id_RSASSA_PSS, explicit)  # the signature side takes the explicit form
@@ -267,7 +267,8 @@ class TestCheckConsistencySpki(unittest.TestCase):
                 spki = _pss_spki(self.public_key, key_params)
                 with self.assertRaises(BadSigAlgIDParams) as ctx:
                     check_consistency_sig_alg_id_and_spki(sig_alg_id, spki)
-                self.assertIsInstance(ctx.exception.__cause__, ValueError)
+                self.assertIsInstance(ctx.exception.__cause__, InvalidKeyData)
+                self.assertIsInstance(ctx.exception.__cause__.__cause__, ValueError)
                 self.assertIn("DER", str(ctx.exception))
                 self.assertIn("DEFAULT", str(ctx.exception))
         check_consistency_sig_alg_id_and_spki(sig_alg_id, _pss_spki(self.public_key, rfc4055.rSASSA_PSS_Default_Params))
@@ -300,19 +301,19 @@ class TestCheckConsistencySpki(unittest.TestCase):
 
     def test_a_key_that_cannot_be_loaded_for_another_reason_keeps_its_error(self):
         """GIVEN a PSS SPKI without parameters and key bits that are no RSAPublicKey / WHEN checked / THEN the
-        loader's ValueError, which is no parameter error (only an explicit DEFAULT in readable parameters makes it
+        loader's InvalidKeyData, which is no parameter error (only an explicit DEFAULT in readable parameters makes it
         a BadSigAlgIDParams).
         """
         spki = _pss_spki(self.public_key)
         spki["subjectPublicKey"] = univ.BitString.fromOctetString(b"\x30\x03\x02\x01\x00")
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(InvalidKeyData) as ctx:
             check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256"), spki)
         self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
 
     def test_a_corrupt_key_with_valid_parameters_keeps_the_loader_error(self):
         """GIVEN a PSS SPKI with valid parameters, without an explicit DEFAULT (SHA-256 / salt 32, the SHA-1 default
         parameters, SHA-1 without NULL, salt 32), and key bits that are no RSAPublicKey / WHEN checked / THEN the
-        loader's plain ValueError, not a BadSigAlgIDParams: the parameters are not the cause.
+        loader's InvalidKeyData, not a BadSigAlgIDParams: the parameters are not the cause.
         """
         for name, key_params in {
             "SHA-256": self.key_params,
@@ -322,14 +323,14 @@ class TestCheckConsistencySpki(unittest.TestCase):
         }.items():
             spki = _pss_spki(self.public_key, key_params)
             spki["subjectPublicKey"] = univ.BitString.fromOctetString(b"\x30\x03\x02\x01\x00")
-            with self.subTest(key_params=name), self.assertRaises(ValueError) as ctx:
+            with self.subTest(key_params=name), self.assertRaises(InvalidKeyData) as ctx:
                 check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=32), spki)
             self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
 
     def test_each_explicit_default_the_loader_refuses_is_bad_sig_alg_id_params(self):
         """GIVEN a PSS SPKI whose parameters carry hashAlgorithm sha1Identifier, maskGenAlgorithm mgf1SHA1Identifier
         or saltLength 20 explicitly (DER, one field at a time) / WHEN checked / THEN BadSigAlgIDParams chained to
-        the loader's ValueError (the DER-only key loader refuses each; the signature side would accept it).
+        the loader's InvalidKeyData (the DER-only key loader refuses each; the signature side would accept it).
         """
         sig_alg_id = _alg_id(rfc9481.id_RSASSA_PSS, rfc4055.rSASSA_PSS_Default_Params)
         for name, der in {
@@ -339,7 +340,8 @@ class TestCheckConsistencySpki(unittest.TestCase):
         }.items():
             with self.subTest(field=name), self.assertRaises(BadSigAlgIDParams) as ctx:
                 check_consistency_sig_alg_id_and_spki(sig_alg_id, _pss_spki(self.public_key, univ.Any(der)))
-            self.assertIsInstance(ctx.exception.__cause__, ValueError)
+            self.assertIsInstance(ctx.exception.__cause__, InvalidKeyData)
+            self.assertIsInstance(ctx.exception.__cause__.__cause__, ValueError)
 
     def test_only_a_field_at_its_default_value_is_an_explicit_default(self):
         """GIVEN RSASSA-PSS-params with a field at its DEFAULT value, at another value, or no field / WHEN asked /
