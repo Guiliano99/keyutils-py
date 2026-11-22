@@ -15,7 +15,7 @@
 * Inspection: :func:`get_supported_pq_algorithms`,
   :func:`get_supported_pq_stfl_algorithms`, :func:`get_key_name`.
 * SPKI: :func:`prepare_spki`, :func:`prepare_subject_public_key_info`,
-  :func:`subject_public_key_info_from_pubkey`.
+  :func:`subject_public_key_info_from_pubkey`, :func:`is_public_key_oid`.
 * Algorithm-identifier builders + validator: :func:`validate_sig_alg_id`,
   :func:`prepare_alg_id`, :func:`prepare_hash_alg_id`,
   :func:`prepare_mgf1_alg_id`, :func:`prepare_rsa_pss_alg_id`,
@@ -754,6 +754,33 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
     return CombinedKeyFactory.load_public_key_from_spki(spki)
 
 
+def is_public_key_oid(oid: Union[str, univ.ObjectIdentifier]) -> bool:
+    """Tell whether ``oid`` is the algorithm of a ``SubjectPublicKeyInfo`` that the loader accepts.
+
+    The answer is read from the tables that :func:`load_public_key_from_spki` dispatches on, so it cannot drift from
+    it. It is ``True`` for the traditional key algorithms (``rsaEncryption``, ``id-RSASSA-PSS``, ``id-ecPublicKey``,
+    Ed25519, Ed448, X25519, X448, DSA, DH as ``dhpublicnumber`` and as ``dhKeyAgreement``), RSA-KEM, ML-DSA, ML-KEM,
+    SLH-DSA, Falcon, FrodoKEM, McEliece, sntrup761, the stateful hash-based signatures (HSS, XMSS, XMSS^MT), the
+    composite signatures and KEMs, Chempat and X-Wing. The HashML-DSA and HashSLH-DSA identifiers are signature
+    identifiers, but the loader reads them as the pure key, so they answer ``True``. It is ``False`` for every other
+    OID: a signature algorithm such as ``sha256WithRSAEncryption`` or ``ecdsa-with-SHA256``, a hash, ``id-ecDH`` and
+    ``id-ecMQV`` (which the loader does not know) and an unknown OID.
+
+    The parameters are not looked at, and ``liboqs`` is not needed: a key that needs it makes the loader raise
+    :class:`MissingOQSDependencyError`, but its OID is still a key OID.
+
+    :param oid: The OID or its dotted string.
+    :return: ``True`` if the loader accepts ``oid`` as the algorithm of a public key.
+    """
+    oid = univ.ObjectIdentifier(str(oid))
+    return (
+        TradKeyFactory.is_trad_oid(oid)
+        or oid in (rfc9481.id_RSASSA_PSS, id_rsa_kem_spki)
+        or oid in PQ_OID_2_NAME  # includes the stateful hash-based signatures
+        or HybridKeyFactory.is_hybrid_oid(oid)
+    )
+
+
 def load_public_key_from_file(filepath: str):
     """Load a public key from a PEM ``SubjectPublicKeyInfo`` file."""
     der = load_and_decode_pem_file(filepath)
@@ -1272,6 +1299,7 @@ __all__ = [
     # Loading and consistency checks
     "load_private_key_from_one_asym_key",
     "load_public_key_from_spki",
+    "is_public_key_oid",
     "check_consistency_sig_alg_id_and_key",
     "check_consistency_sig_alg_id_and_spki",
 ]

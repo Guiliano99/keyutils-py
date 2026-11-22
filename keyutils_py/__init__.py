@@ -45,6 +45,7 @@ Public top-level surface (most callers stop here)::
         modify_pq_stateful_sig_private_key,  # keyutils
         load_private_key_from_one_asym_key,  # keyutils
         load_public_key_from_spki,  # keyutils
+        is_public_key_oid,  # keyutils
         check_consistency_sig_alg_id_and_key,  # keyutils
         check_consistency_sig_alg_id_and_spki,  # keyutils
         prepare_spki,  # keyutils
@@ -106,6 +107,7 @@ from keyutils_py.keyutils import (
     check_consistency_sig_alg_id_and_spki,
     generate_key,
     get_key_name,
+    is_public_key_oid,
     load_private_key_from_file,
     load_private_key_from_one_asym_key,
     load_public_key_from_file,
@@ -215,6 +217,7 @@ __all__ = [
     "modify_pq_stateful_sig_private_key",
     "load_private_key_from_one_asym_key",
     "load_public_key_from_spki",
+    "is_public_key_oid",
     "check_consistency_sig_alg_id_and_key",
     "check_consistency_sig_alg_id_and_spki",
     # Key types
