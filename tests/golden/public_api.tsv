@@ -24,6 +24,7 @@ VerifyKey
 aes_cbc_decrypt_no_padding
 aes_cbc_encrypt_no_padding
 check_consistency_sig_alg_id_and_key
+check_consistency_sig_alg_id_and_spki
 cms_digest_algs
 compute_decaps
 compute_ecdh

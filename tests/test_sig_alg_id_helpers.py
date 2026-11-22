@@ -3,7 +3,8 @@
 
 """Tests for the helpers around the signature algorithm table.
 
-``check_consistency_sig_alg_id_and_key``, ``validate_sig_alg_id``, ``prepare_sig_alg_id`` and
+``check_consistency_sig_alg_id_and_key``, ``check_consistency_sig_alg_id_and_spki``, ``validate_sig_alg_id``,
+``prepare_sig_alg_id`` and
 ``prepare_hash_alg_id`` read the same row as ``sign_with_alg_id`` and ``verify_signature_with_alg_id``.
 """
 
@@ -12,6 +13,7 @@ import unittest
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa, x25519
 from keyutils_py import (
     check_consistency_sig_alg_id_and_key,
+    check_consistency_sig_alg_id_and_spki,
     generate_key,
     sign_with_alg_id,
     validate_sig_alg_id,
@@ -24,11 +26,12 @@ from keyutils_py.keyutils import (
     prepare_mgf1_alg_id,
     prepare_rsa_pss_alg_id,
     prepare_sig_alg_id,
+    subject_public_key_info_from_pubkey,
 )
 from keyutils_py.oids import COMPOSITE_SIG_NAME_TO_OID, PQ_NAME_2_OID
-from pyasn1.codec.der import encoder
+from pyasn1.codec.der import decoder, encoder
 from pyasn1.type import univ
-from pyasn1_alt_modules import rfc4055, rfc8017, rfc9481
+from pyasn1_alt_modules import rfc4055, rfc5280, rfc8017, rfc9481
 
 DATA = b"keyutils-py signature algorithm helpers"
 
@@ -41,6 +44,25 @@ def _der(alg_id) -> str:
 def _alg_id(oid, parameters=None):
     """Build an ``AlgorithmIdentifier``."""
     return prepare_alg_id(oid, value=parameters)
+
+
+def _pss_spki(public_key, parameters=None):
+    """Return the id-RSASSA-PSS SPKI of ``public_key`` with ``parameters`` (absent for ``None``)."""
+    spki = subject_public_key_info_from_pubkey(public_key, use_rsa_pss=True)
+    spki["algorithm"] = _alg_id(rfc9481.id_RSASSA_PSS, parameters)
+    return spki
+
+
+def _explicit_default_pss_params():
+    """Return RSASSA-PSS-params with every field present at its DEFAULT value (RFC 4055 Section 3.1)."""
+    params = rfc4055.RSASSA_PSS_params()
+    params["hashAlgorithm"]["algorithm"] = rfc4055.sha1Identifier["algorithm"]
+    params["hashAlgorithm"]["parameters"] = rfc4055.sha1Identifier["parameters"]
+    params["maskGenAlgorithm"]["algorithm"] = rfc4055.mgf1SHA1Identifier["algorithm"]
+    params["maskGenAlgorithm"]["parameters"] = rfc4055.mgf1SHA1Identifier["parameters"]
+    params["saltLength"] = 20
+    params["trailerField"] = 1
+    return params
 
 
 class TestCheckConsistency(unittest.TestCase):
@@ -133,6 +155,94 @@ class TestCheckConsistency(unittest.TestCase):
             check_consistency_sig_alg_id_and_key(_alg_id(rfc9481.id_Ed25519), key)
         with self.assertRaises(BadSigAlgID):
             check_consistency_sig_alg_id_and_key(_alg_id(rfc9481.id_Ed448), ed25519.Ed25519PrivateKey.generate())
+
+
+class TestCheckConsistencySpki(unittest.TestCase):
+    """``check_consistency_sig_alg_id_and_spki`` applies RFC 4055 Sections 1.2 and 3.3 to the SPKI of the key."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Generate one RSA key and the SHA-256 RSASSA-PSS-params (salt length 32) of its PSS SPKI."""
+        cls.public_key = rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key()
+        cls.key_params = prepare_rsa_pss_alg_id("sha256", salt_length=32)["parameters"]
+
+    def test_case_1_rsa_encryption_key_needs_no_parameter_validation(self):
+        """GIVEN an rsaEncryption SPKI / WHEN checked against PSS, SHAKE-PSS and PKCS#1 v1.5 / THEN all pass."""
+        spki = subject_public_key_info_from_pubkey(self.public_key)
+        for alg_id in (
+            prepare_rsa_pss_alg_id("sha512", salt_length=0),
+            _alg_id(rfc9481.id_RSASSA_PSS_SHAKE256),
+            _alg_id(rfc9481.sha256WithRSAEncryption, univ.Null("")),
+        ):
+            with self.subTest(oid=str(alg_id["algorithm"])):
+                check_consistency_sig_alg_id_and_spki(alg_id, spki)
+
+    def test_case_2_pss_key_without_parameters_needs_no_parameter_validation(self):
+        """GIVEN a PSS SPKI without parameters / WHEN checked against any PSS identifier / THEN it passes."""
+        spki = _pss_spki(self.public_key)
+        for alg_id in (prepare_rsa_pss_alg_id("sha384", salt_length=0), _alg_id(rfc9481.id_RSASSA_PSS_SHAKE128)):
+            with self.subTest(oid=str(alg_id["algorithm"])):
+                check_consistency_sig_alg_id_and_spki(alg_id, spki)
+
+    def test_case_3_matching_parameters_pass(self):
+        """GIVEN a PSS SPKI with parameters, built and decoded from DER / WHEN checked against the same / THEN pass."""
+        spki = _pss_spki(self.public_key, self.key_params)
+        received, _ = decoder.decode(encoder.encode(spki), asn1Spec=rfc5280.SubjectPublicKeyInfo())
+        for key_spki in (spki, received):
+            check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=32), key_spki)
+
+    def test_case_3_mismatched_hash_is_refused(self):
+        """GIVEN a SHA-256 PSS SPKI / WHEN checked against SHA-384 PSS or SHAKE128-PSS, also with the key's
+        parameters (RFC 8702: they must be absent) / THEN BadSigAlgIDParams.
+        """
+        spki = _pss_spki(self.public_key, self.key_params)
+        for alg_id in (
+            prepare_rsa_pss_alg_id("sha384", salt_length=32),
+            _alg_id(rfc9481.id_RSASSA_PSS_SHAKE128),
+            _alg_id(rfc9481.id_RSASSA_PSS_SHAKE128, self.key_params),
+        ):
+            with self.subTest(oid=str(alg_id["algorithm"])), self.assertRaises(BadSigAlgIDParams):
+                check_consistency_sig_alg_id_and_spki(alg_id, spki)
+
+    def test_case_3_mismatched_mgf1_hash_is_refused(self):
+        """GIVEN a SHA-256 PSS SPKI / WHEN checked against PSS with MGF1-SHA-512 / THEN BadSigAlgIDParams."""
+        alg_id = prepare_rsa_pss_alg_id("sha256", salt_length=32, mgf1_hash_alg="sha512")
+        with self.assertRaises(BadSigAlgIDParams):
+            check_consistency_sig_alg_id_and_spki(alg_id, _pss_spki(self.public_key, self.key_params))
+
+    def test_case_3_salt_length_must_be_greater_or_equal(self):
+        """GIVEN a PSS SPKI with salt length 32 / WHEN checked against 31, 32 and 64 / THEN 31 is refused."""
+        spki = _pss_spki(self.public_key, self.key_params)
+        with self.assertRaises(BadSigAlgIDParams):
+            check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=31), spki)
+        for salt_length in (32, 64):
+            check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=salt_length), spki)
+
+    def test_case_3_absent_and_explicit_default_parameters_are_equal(self):
+        """GIVEN a PSS SPKI with empty parameters (all DEFAULT) / WHEN the signature names them absent or explicit
+        / THEN it passes, and SHA-256 is refused, because the empty parameters mean SHA-1 (case 3, not case 2).
+        """
+        spki = _pss_spki(self.public_key, rfc4055.rSASSA_PSS_Default_Params)
+        explicit = _explicit_default_pss_params()
+        for sig_params in (rfc4055.rSASSA_PSS_Default_Params, explicit, univ.Any(encoder.encode(explicit))):
+            with self.subTest(sig_params=_der(sig_params)):
+                check_consistency_sig_alg_id_and_spki(_alg_id(rfc9481.id_RSASSA_PSS, sig_params), spki)
+        with self.assertRaises(BadSigAlgIDParams):
+            check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=20), spki)
+
+    def test_non_pss_identifier_on_pss_key_is_refused(self):
+        """GIVEN a PSS SPKI, with and without parameters / WHEN checked against PKCS#1 v1.5, rsaEncryption or
+        ECDSA / THEN BadSigAlgID, not BadSigAlgIDParams (RFC 4055 Section 1.2).
+        """
+        for spki in (_pss_spki(self.public_key), _pss_spki(self.public_key, self.key_params)):
+            for alg_id in (
+                _alg_id(rfc9481.sha256WithRSAEncryption, univ.Null("")),
+                _alg_id(rfc8017.rsaEncryption, univ.Null("")),
+                _alg_id(rfc9481.ecdsa_with_SHA256),
+            ):
+                with self.subTest(oid=str(alg_id["algorithm"])), self.assertRaises(BadSigAlgID) as ctx:
+                    check_consistency_sig_alg_id_and_spki(alg_id, spki)
+                self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
 
 
 class TestValidateSigAlgId(unittest.TestCase):
