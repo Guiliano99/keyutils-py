@@ -17,6 +17,7 @@ import base64
 import textwrap
 from typing import Dict, List, Optional, Union, cast
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed448 import Ed448PrivateKey
@@ -37,6 +38,7 @@ from keyutils_py.oids import (
     PQ_STATEFUL_HASH_SIG_OID_2_NAME,
     get_curve_instance,
     id_rsa_kem_spki,
+    may_return_oid_to_name,
 )
 from keyutils_py.types import (
     DHKEMPrivateKey,
@@ -194,6 +196,8 @@ class CombinedKeyFactory:
 
         :param spki: The ``SubjectPublicKeyInfo`` structure or its DER encoding.
         :return: The loaded public key.
+        :raises BadAlg: If ``cryptography`` cannot load the algorithm or its parameters, e.g. an unknown OID or an EC
+            curve that it does not support (its ``UnsupportedAlgorithm`` is the cause).
         """
         if isinstance(spki, bytes):
             # The decoder returns Any, which would leave ``spki`` typed as the union; name the decoded type.
@@ -204,19 +208,22 @@ class CombinedKeyFactory:
 
         oid = spki["algorithm"]["algorithm"]
 
-        if HybridKeyFactory.is_hybrid_oid(oid):
-            return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
+        try:
+            if HybridKeyFactory.is_hybrid_oid(oid):
+                return HybridKeyFactory.load_hybrid_public_key_from_spki(spki)
 
-        if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
-            return PQStatefulSigFactory.load_public_key_from_spki(spki)
+            if oid in PQ_STATEFUL_HASH_SIG_OID_2_NAME:
+                return PQStatefulSigFactory.load_public_key_from_spki(spki)
 
-        if oid in PQ_OID_2_NAME or str(oid) in PQ_OID_2_NAME:
-            return PQKeyFactory.load_public_key_from_spki(spki=spki)
+            if oid in PQ_OID_2_NAME or str(oid) in PQ_OID_2_NAME:
+                return PQKeyFactory.load_public_key_from_spki(spki=spki)
 
-        if oid == id_rsa_kem_spki:
-            return RSAEncapKey.from_spki(spki)
+            if oid == id_rsa_kem_spki:
+                return RSAEncapKey.from_spki(spki)
 
-        return TradKeyFactory.load_public_key_from_spki(spki)
+            return TradKeyFactory.load_public_key_from_spki(spki)
+        except UnsupportedAlgorithm as err:
+            raise BadAlg(f"The public key cannot be loaded ({may_return_oid_to_name(oid)}): {err}") from err
 
     @staticmethod
     def load_private_key_from_one_asym_key(

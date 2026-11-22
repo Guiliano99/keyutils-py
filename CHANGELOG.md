@@ -268,6 +268,10 @@ SPDX-License-Identifier: Apache-2.0 -->
   RSA keys, and composite keys take `use_rsa_pss` and `ctx` (`TypeError` before).
 - `get_sig_alg_info`, `validate_sig_alg_id` and `sign_with_alg_id` raise `BadAlg` for an `AlgorithmIdentifier` without
   an OID instead of a `PyAsn1Error`.
+- `load_public_key_from_spki` (and `CombinedKeyFactory.load_public_key_from_spki`) raise `BadAlg` for a key that
+  `cryptography` cannot load, for example an unknown algorithm OID or an EC key on a curve it does not support such as
+  secp112r1. The `UnsupportedAlgorithm` of `cryptography` escaped before; it is the cause of the `BadAlg` now, so a
+  caller that catches `KeyUtilsError` needs no `cryptography` import for this case.
 
 # 0.0.2
 

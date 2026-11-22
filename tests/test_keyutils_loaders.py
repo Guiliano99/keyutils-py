@@ -7,18 +7,20 @@ import os
 import tempfile
 import unittest
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from keyutils_py import (
     check_consistency_sig_alg_id_and_key,
     compute_decaps,
     compute_encaps,
+    encode_to_der,
     generate_key,
     load_private_key_from_one_asym_key,
     load_public_key_from_spki,
     prepare_spki,
     save_key,
 )
-from keyutils_py.exceptions import BadSigAlgID, InvalidKeyCombination, InvalidKeyData
+from keyutils_py.exceptions import BadAlg, BadSigAlgID, InvalidKeyCombination, InvalidKeyData
 from keyutils_py.factories.trad_factory import TradKeyFactory
 from keyutils_py.keys.chempat_key import ChempatPublicKey
 from keyutils_py.keys.trad_keys import DSAPrivateKey
@@ -30,7 +32,8 @@ from keyutils_py.oids import (
     get_hash_from_oid,
 )
 from keyutils_py.utils import load_and_decode_pem_file, try_decode_pyasn1
-from pyasn1_alt_modules import rfc5958
+from pyasn1.type import univ
+from pyasn1_alt_modules import rfc5280, rfc5958
 
 
 def _spki_der(public_key) -> bytes:
@@ -106,6 +109,20 @@ class TestLoadPublicKeyFromSpki(unittest.TestCase):
         """GIVEN an EC SPKI / WHEN loaded / THEN the EC public key is returned."""
         pub = TradKeyFactory.generate_trad_key("ecdsa").public_key()
         self.assertEqual(load_public_key_from_spki(_spki_der(pub)).public_numbers(), pub.public_numbers())
+
+    def test_what_cryptography_cannot_load_raises_bad_alg(self):
+        """GIVEN an EC SPKI on secp112r1 or of an unknown OID / WHEN loaded / THEN BadAlg from UnsupportedAlgorithm."""
+        der = _spki_der(TradKeyFactory.generate_trad_key("ecdsa").public_key())
+        on_secp112r1, _ = try_decode_pyasn1(der, rfc5280.SubjectPublicKeyInfo())
+        on_secp112r1["algorithm"]["parameters"] = encode_to_der(univ.ObjectIdentifier("1.3.132.0.6"))  # SEC 2 secp112r1
+        unknown_oid, _ = try_decode_pyasn1(der, rfc5280.SubjectPublicKeyInfo())
+        unknown_oid["algorithm"]["algorithm"] = univ.ObjectIdentifier("1.2.3.4.5.6")  # an OID of no table
+        for name, spki in (("secp112r1", on_secp112r1), ("unknown OID", unknown_oid)):
+            for data in (spki, encode_to_der(spki)):
+                with self.subTest(name=name, type=type(data).__name__):
+                    with self.assertRaises(BadAlg) as caught:
+                        load_public_key_from_spki(data)
+                    self.assertIsInstance(caught.exception.__cause__, UnsupportedAlgorithm)
 
 
 class TestCheckConsistency(unittest.TestCase):
