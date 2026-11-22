@@ -8,4 +8,5 @@ SPDX-License-Identifier: Apache-2.0 -->
 - `release-metadata`, `validate-sbom`, `extract-requirements` and `traceability`, moved unchanged from the copies in
   DefaultPy, pkixutils-py, keyutils-py and the OCSP and CMS suites, with their unit tests.
 - `add-licenses`, the four copies in one, with the directories as arguments.
-- `check-config`, `check-pins` and `check-import-boundaries`, new.
+- `check-config`, `check-pins` and `check-import-boundaries`, new. `check-pins` refuses a local repository both as a
+  direct reference and as a `[tool.uv.sources]` git source, also with `--allow-commit-pins`.

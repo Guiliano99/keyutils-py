@@ -148,10 +148,11 @@ class TestCheckPins(unittest.TestCase):
 
     def test_uv_sources(self):
         """
-        GIVEN uv sources of a shared package: a tag, a commit, a branch and a path, with the dev group naming it
-              without a version.
+        GIVEN uv sources of a shared package: a tag, a commit, a branch, a path and a local git repository, with the
+              dev group naming it without a version.
         WHEN the pins are checked.
-        THEN only the tag passes, and the dev group entry is left to its source.
+        THEN only the tag passes, the local repository fails even when commit pins are allowed, and the dev group
+             entry is left to its source.
         """
         for source, ok in (("tag = 'v0.2.0'", True), ("rev = '2f44e29'", False), ("branch = 'main'", False)):
             toml = (
@@ -162,6 +163,8 @@ class TestCheckPins(unittest.TestCase):
                 self.assertEqual(not self._problems(toml), ok)
         toml = "[tool.uv.sources]\nkeyutils-py = { path = '../keyutils-py', editable = true }\n"
         self.assertTrue(self._problems(toml))
+        toml = "[tool.uv.sources]\nkeyutils-py = { git = 'file:///home/me/keyutils-py', rev = '2f44e29' }\n"
+        self.assertTrue(self._problems(toml, allow=True))
 
 
 if __name__ == "__main__":

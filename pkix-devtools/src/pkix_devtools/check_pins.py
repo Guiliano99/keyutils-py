@@ -42,11 +42,15 @@ def _ref_problem(ref: Optional[str], allow_commits: bool) -> Optional[str]:
     return f"names {ref!r}, which is not a tag (a branch?); pin a tag"
 
 
+_LOCAL = ("git+file:", "file:")
+_LOCAL_PROBLEM = "points at a local repository; it resolves on this machine only"
+
+
 def url_problem(url: str, allow_commits: bool) -> Optional[str]:
     """Return what is wrong with a direct reference (`name @ url`), or None."""
     url = url.split(";")[0].strip()
-    if url.startswith(("git+file:", "file:")):
-        return "points at a local repository; it resolves on this machine only"
+    if url.startswith(_LOCAL):
+        return _LOCAL_PROBLEM
     if not url.startswith("git+"):
         return None
     path = url.split("://", 1)[-1].partition("/")[2].split("#")[0]
@@ -103,6 +107,8 @@ def problems(config: dict, kind: str, allow_commits: bool, packages=SHARED) -> L
                 problem = _ref_problem(source.get("tag") or source.get("rev"), allow_commits)
                 if "branch" in source:
                     problem = f"follows the branch {source['branch']!r}; pin a tag"
+                if source["git"].startswith(_LOCAL):
+                    problem = _LOCAL_PROBLEM
             else:
                 problem = None
             if problem:
