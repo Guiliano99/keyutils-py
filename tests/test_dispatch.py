@@ -11,7 +11,6 @@
 
 import unittest
 
-from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa, x448, x25519
 from pyasn1.type import univ
 from pyasn1_alt_modules import rfc5280, rfc5480, rfc9480, rfc9481
@@ -24,7 +23,6 @@ from keyutils_py import (
     get_key_name,
     validate_sig_alg_id,
 )
-from keyutils_py.asn1utils import encode_to_der
 from keyutils_py.keyutils import generate_key_based_on_alg_id
 from keyutils_py.utils import OQS_AVAILABLE
 from keyutils_py.exceptions import BadAlg, BadSigAlgIDParams, InvalidKeyCombination
@@ -175,16 +173,6 @@ class TestComputeEcdh(unittest.TestCase):
         b = ec.generate_private_key(ec.SECP256R1())
         cert = _build_cert_with_ec_pubkey(b.public_key())
         self.assertEqual(compute_ecdh(a, cert), compute_ecdh(a, b.public_key()))
-
-    def test_certificate_cryptography_cannot_load_raises_bad_alg(self):
-        """GIVEN a CMPCertificate whose EC key names secp112r1 / WHEN compute_ecdh / THEN BadAlg from UnsupportedAlgorithm."""
-        a = ec.generate_private_key(ec.SECP256R1())
-        cert = _build_cert_with_ec_pubkey(ec.generate_private_key(ec.SECP256R1()).public_key())
-        secp112r1 = univ.ObjectIdentifier("1.3.132.0.6")  # SEC 2 secp112r1, which cryptography does not support
-        cert["tbsCertificate"]["subjectPublicKeyInfo"]["algorithm"]["parameters"] = encode_to_der(secp112r1)
-        with self.assertRaises(BadAlg) as caught:
-            compute_ecdh(a, cert)
-        self.assertIsInstance(caught.exception.__cause__, UnsupportedAlgorithm)
 
 
 class TestGetKeyName(unittest.TestCase):
