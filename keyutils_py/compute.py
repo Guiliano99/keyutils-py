@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional, Tuple, Union, get_args
 
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pss
-from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa, x448, x25519
 from pyasn1.type import univ
@@ -821,16 +821,10 @@ def _compute_ecdh_with_cofactor(
 
 
 def _public_key_from_cert(cert: rfc9480.CMPCertificate) -> Any:
-    """Extract and decode the public key from a :class:`CMPCertificate`.
-
-    :raises BadAlg: If cryptography cannot load the key, as :func:`keyutils_py.load_public_key_from_spki` does.
-    """
+    """Extract and decode the public key from a :class:`CMPCertificate`."""
     spki = cert["tbsCertificate"]["subjectPublicKeyInfo"]
     der = encode_to_der(spki)
-    try:
-        return serialization.load_der_public_key(der)
-    except UnsupportedAlgorithm as err:
-        raise BadAlg(f"cryptography cannot load the certificate's public key: {err}") from err
+    return serialization.load_der_public_key(der)
 
 
 def compute_ecdh(
