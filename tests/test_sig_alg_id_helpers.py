@@ -21,6 +21,7 @@ from keyutils_py import (
 )
 from keyutils_py.exceptions import BadAlg, BadSigAlgID, BadSigAlgIDParams
 from keyutils_py.keyutils import (
+    _has_explicit_pss_default,
     prepare_alg_id,
     prepare_hash_alg_id,
     prepare_mgf1_alg_id,
@@ -34,6 +35,16 @@ from pyasn1.type import univ
 from pyasn1_alt_modules import rfc4055, rfc5280, rfc8017, rfc9481
 
 DATA = b"keyutils-py signature algorithm helpers"
+
+
+# DER of RSASSA-PSS-params with one field at its DEFAULT value (RFC 4055 Section 3.1), written by hand because the DER
+# encoder of pyasn1 omits an integer DEFAULT. The loader of cryptography refuses the first three, not the fourth.
+_EXPLICIT_HASH_SHA1 = bytes.fromhex("300da00b300906052b0e03021a0500")  # [0] sha1Identifier (id-sha1, NULL)
+_EXPLICIT_MGF1_SHA1 = bytes.fromhex("301aa118301606092a864886f70d010108300906052b0e03021a0500")  # [1] mgf1SHA1Identifier
+_EXPLICIT_SALT_20 = bytes.fromhex("3005a203020114")  # [2] 20
+_EXPLICIT_TRAILER_1 = bytes.fromhex("3005a303020101")  # [3] 1
+_HASH_SHA1_WITHOUT_NULL = bytes.fromhex("300ba009300706052b0e03021a")  # [0] (id-sha1): not sha1Identifier
+_SALT_32 = bytes.fromhex("3005a203020120")  # [2] 32
 
 
 def _der(alg_id) -> str:
@@ -289,13 +300,64 @@ class TestCheckConsistencySpki(unittest.TestCase):
 
     def test_a_key_that_cannot_be_loaded_for_another_reason_keeps_its_error(self):
         """GIVEN a PSS SPKI without parameters and key bits that are no RSAPublicKey / WHEN checked / THEN the
-        loader's ValueError, which is no parameter error (only readable parameters make it a BadSigAlgIDParams).
+        loader's ValueError, which is no parameter error (only an explicit DEFAULT in readable parameters makes it
+        a BadSigAlgIDParams).
         """
         spki = _pss_spki(self.public_key)
         spki["subjectPublicKey"] = univ.BitString.fromOctetString(b"\x30\x03\x02\x01\x00")
         with self.assertRaises(ValueError) as ctx:
             check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256"), spki)
         self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
+
+    def test_a_corrupt_key_with_valid_parameters_keeps_the_loader_error(self):
+        """GIVEN a PSS SPKI with valid parameters, without an explicit DEFAULT (SHA-256 / salt 32, the SHA-1 default
+        parameters, SHA-1 without NULL, salt 32), and key bits that are no RSAPublicKey / WHEN checked / THEN the
+        loader's plain ValueError, not a BadSigAlgIDParams: the parameters are not the cause.
+        """
+        for name, key_params in {
+            "SHA-256": self.key_params,
+            "default parameters": rfc4055.rSASSA_PSS_Default_Params,
+            "SHA-1 without NULL": univ.Any(_HASH_SHA1_WITHOUT_NULL),
+            "salt 32": univ.Any(_SALT_32),
+        }.items():
+            spki = _pss_spki(self.public_key, key_params)
+            spki["subjectPublicKey"] = univ.BitString.fromOctetString(b"\x30\x03\x02\x01\x00")
+            with self.subTest(key_params=name), self.assertRaises(ValueError) as ctx:
+                check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256", salt_length=32), spki)
+            self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
+
+    def test_each_explicit_default_the_loader_refuses_is_bad_sig_alg_id_params(self):
+        """GIVEN a PSS SPKI whose parameters carry hashAlgorithm sha1Identifier, maskGenAlgorithm mgf1SHA1Identifier
+        or saltLength 20 explicitly (DER, one field at a time) / WHEN checked / THEN BadSigAlgIDParams chained to
+        the loader's ValueError (the DER-only key loader refuses each; the signature side would accept it).
+        """
+        sig_alg_id = _alg_id(rfc9481.id_RSASSA_PSS, rfc4055.rSASSA_PSS_Default_Params)
+        for name, der in {
+            "hashAlgorithm": _EXPLICIT_HASH_SHA1,
+            "maskGenAlgorithm": _EXPLICIT_MGF1_SHA1,
+            "saltLength": _EXPLICIT_SALT_20,
+        }.items():
+            with self.subTest(field=name), self.assertRaises(BadSigAlgIDParams) as ctx:
+                check_consistency_sig_alg_id_and_spki(sig_alg_id, _pss_spki(self.public_key, univ.Any(der)))
+            self.assertIsInstance(ctx.exception.__cause__, ValueError)
+
+    def test_only_a_field_at_its_default_value_is_an_explicit_default(self):
+        """GIVEN RSASSA-PSS-params with a field at its DEFAULT value, at another value, or no field / WHEN asked /
+        THEN only the first is an explicit DEFAULT; SHA-1 without NULL is not the sha1Identifier (RFC 4055 2.1).
+        """
+        for name, parameters, expected in (
+            ("empty", rfc4055.rSASSA_PSS_Default_Params, False),
+            ("SHA-256 / salt 32 as a structure", self.key_params, False),
+            ("SHA-1 without NULL", univ.Any(_HASH_SHA1_WITHOUT_NULL), False),
+            ("salt 32", univ.Any(_SALT_32), False),
+            ("hashAlgorithm sha1Identifier", univ.Any(_EXPLICIT_HASH_SHA1), True),
+            ("maskGenAlgorithm mgf1SHA1Identifier", univ.Any(_EXPLICIT_MGF1_SHA1), True),
+            ("saltLength 20", univ.Any(_EXPLICIT_SALT_20), True),
+            ("trailerField 1", univ.Any(_EXPLICIT_TRAILER_1), True),
+            ("every field, as a structure", _explicit_default_pss_params(), True),
+        ):
+            with self.subTest(parameters=name):
+                self.assertIs(_has_explicit_pss_default(parameters), expected)
 
 
 class TestValidateSigAlgId(unittest.TestCase):
