@@ -196,9 +196,15 @@ SPDX-License-Identifier: Apache-2.0 -->
   loads. It reads the tables the loader dispatches on, so a consumer needs no copy of them: `True` for `rsaEncryption`,
   `id-RSASSA-PSS`, `id-ecPublicKey`, Ed25519, Ed448, X25519, X448, DSA, DH (`dhpublicnumber` and `dhKeyAgreement`),
   RSA-KEM, ML-DSA, ML-KEM, SLH-DSA, Falcon, FrodoKEM, McEliece, sntrup761, HSS, XMSS and XMSS^MT, the composite
-  signatures and KEMs, Chempat and X-Wing. `False` for signature algorithms (`sha256WithRSAEncryption`,
-  `ecdsa-with-SHA256`, the SHAKE RSASSA-PSS identifiers), hashes, `id-ecDH`, `id-ecMQV` and unknown OIDs. The HashML-DSA
-  and HashSLH-DSA identifiers answer `True`, because the loader reads them as the pure key. It needs no `liboqs`.
+  signatures and KEMs, Chempat and X-Wing, and for the HashSLH-DSA identifiers (`id-hash-slh-dsa-*`): RFC 9909
+  Section 5 says "The AlgorithmIdentifier for an SLH-DSA public key MUST use one of the id-slh-dsa-* or
+  id-hash-slh-dsa-* object identifiers from Section 3". `False` for signature algorithms (`sha256WithRSAEncryption`,
+  `ecdsa-with-SHA256`, the SHAKE RSASSA-PSS identifiers), hashes, `id-ecDH`, `id-ecMQV`, unknown OIDs and the three
+  HashML-DSA identifiers (`id-hash-ml-dsa-*-with-sha512`): RFC 9881 Section 8.3 says they "MUST NOT be in X.509
+  certificates used for CRLs, OCSP, certificate issuance, and related PKIX protocols". The loader still reads such an
+  SPKI as the pure key, so `is_public_key_oid` is the check for a consumer that must not accept it. This corrects the
+  first form of the function, which answered `True` for the HashML-DSA and HashSLH-DSA identifiers alike because the
+  loader reads them as the pure key. It needs no `liboqs`.
 
 ## Changed
 
