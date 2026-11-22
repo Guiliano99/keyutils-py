@@ -173,6 +173,9 @@ SPDX-License-Identifier: Apache-2.0 -->
   Section 2.3). They are in `keyutils_py.primitives` and are its only exported functions. A key that is not 16, 24 or
   32 octets, an IV that is not 16 octets and data that is empty or no multiple of 16 octets are a `ValueError`. CMS
   content is still encrypted with `encrypt_content`, which pads. Tested with NIST SP 800-38A F.2.1 to F.2.6.
+- `keyutils_py.oids.id_alg_PWRI_KEK`, exported from `keyutils_py`: `1.2.840.113549.1.9.16.3.9`, the key wrap of a
+  password recipient (RFC 3211 Section 2.3), built on the `id-alg` arc of `rfc9688`. No pyasn1-alt-modules module has
+  it. It is a constant only; no mechanism computes the key wrap.
 
 ## Changed
 

@@ -622,6 +622,9 @@ KM_KW_ALG = {
     rfc9481.id_aes192_wrap: "aes192_wrap",
     rfc9481.id_aes256_wrap: "aes256_wrap",
 }
+# id-alg-PWRI-KEK, the key wrap of a password recipient (RFC 3211 Section 2.3: id-alg 9). No pyasn1-alt-modules module
+# has the constant; the arc is the one of RFC 9688.
+id_alg_PWRI_KEK = rfc9688.id_alg + (9,)
 
 # CMP message protection: the MAC algorithms (RFC 9481, RFC 9810) and the signature algorithms next to them.
 id_KemBasedMac = univ.ObjectIdentifier("1.2.840.113533.7.66.16")

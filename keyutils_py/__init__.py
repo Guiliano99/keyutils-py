@@ -139,6 +139,7 @@ from keyutils_py.oids import (
     compute_hash,
     get_hash_from_oid,
     get_sig_alg_info,
+    id_alg_PWRI_KEK,
     sha_alg_name_to_oid,
 )
 from keyutils_py.primitives import aes_cbc_decrypt_no_padding, aes_cbc_encrypt_no_padding
@@ -181,7 +182,8 @@ __all__ = [
     "wrap_key_length",
     "encrypt_content",
     "decrypt_content",
-    # Unpadded AES-CBC for key-wrap constructions (RFC 3211 Section 2.3)
+    # Building blocks of key-wrap constructions: id-alg-PWRI-KEK (RFC 3211 Section 2.3)
+    "id_alg_PWRI_KEK",
     "aes_cbc_encrypt_no_padding",
     "aes_cbc_decrypt_no_padding",
     # KEMs and ECDH
