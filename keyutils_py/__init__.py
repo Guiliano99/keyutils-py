@@ -55,7 +55,8 @@ Submodules (when you need more):
 * ``keyutils_py.mechanisms`` — the operations that an ``AlgorithmIdentifier`` selects: :func:`make_alg_id`,
   :func:`kdf_derive`, :func:`compute_mac`, :func:`verify_mac`, :func:`wrap_cek` and :func:`unwrap_cek`,
   :func:`encrypt_content` and :func:`decrypt_content`.
-* ``keyutils_py.primitives`` — the keyless functions below them, by the name of the hash (importable, not public API).
+* ``keyutils_py.primitives`` — the keyless functions below them, by the name of the hash (importable, not public API,
+  apart from :func:`aes_cbc_encrypt_no_padding` and :func:`aes_cbc_decrypt_no_padding` for key-wrap constructions).
 * ``keyutils_py.keyutils`` — generate, save/load, SPKI, alg-id builders, manipulation.
 * ``keyutils_py.security`` — security-strength estimation.
 * ``keyutils_py.asn1utils`` — DER encode/decode and a ``BitString`` builder
@@ -140,6 +141,7 @@ from keyutils_py.oids import (
     get_sig_alg_info,
     sha_alg_name_to_oid,
 )
+from keyutils_py.primitives import aes_cbc_decrypt_no_padding, aes_cbc_encrypt_no_padding
 from keyutils_py.security import estimate_key_security_strength
 from keyutils_py.types import DSAPublicKey, PublicKey, SignKey, TradVerifyKey, VerifyKey
 
@@ -179,6 +181,9 @@ __all__ = [
     "wrap_key_length",
     "encrypt_content",
     "decrypt_content",
+    # Unpadded AES-CBC for key-wrap constructions (RFC 3211 Section 2.3)
+    "aes_cbc_encrypt_no_padding",
+    "aes_cbc_decrypt_no_padding",
     # KEMs and ECDH
     "compute_encaps",
     "compute_decaps",

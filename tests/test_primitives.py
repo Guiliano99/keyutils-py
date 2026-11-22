@@ -10,7 +10,7 @@ External vectors, so that a shared misreading cannot pass both sides (the source
 * X9.63 (KDF2) against ``cryptography``'s ``X963KDF`` and a ``hashlib`` reference; KDF3 against RFC 9690 Appendix D.1.
 * RFC 2202 and RFC 4231 (HMAC test case 1), ``hmac`` for every hash.
 * NIST SP 800-185 KMAC samples 1 to 6, GCM specification (McGrew and Viega) test cases 1, 2, 4, 7 and 13 for GMAC and
-  GCM, NIST SP 800-38A F.2.1 for CBC.
+  GCM, NIST SP 800-38A F.2.1 for CBC, F.2.1 to F.2.6 for CBC without padding.
 * RFC 3394 Section 4.1 to 4.6 (AES key wrap) and RFC 5649 Section 6 (key wrap with padding).
 """
 
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import keyutils_py
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.x963kdf import X963KDF
 from keyutils_py import primitives
 from keyutils_py.exceptions import BadAlg, BadAlgParams, IntegrityError, KeyUtilsError
@@ -95,7 +96,8 @@ class TestBoundary(unittest.TestCase):
         }
         self.assertIn("hkdf", own)
         self.assertNotIn("primitives", keyutils_py.__all__)
-        self.assertEqual(own & set(keyutils_py.__all__), set())
+        # The one exception: key-wrap constructions above keyutils (RFC 3211 Section 2.3) need unpadded CBC.
+        self.assertEqual(own & set(keyutils_py.__all__), {"aes_cbc_encrypt_no_padding", "aes_cbc_decrypt_no_padding"})
 
     def test_hash_names_are_the_names_of_the_hash_registry(self):
         """GIVEN the hash names of primitives / WHEN compared with the registry / THEN the registry minus SHAKE."""
@@ -509,6 +511,82 @@ class TestAesCbc(unittest.TestCase):
         """GIVEN a 12 octet IV / WHEN used / THEN ValueError, not IntegrityError."""
         with self.assertRaises(ValueError):
             primitives.aes_cbc_encrypt(bytes(16), bytes(12), b"x")
+
+
+# NIST SP 800-38A Appendix F.2: the IV and the four plaintext blocks of every CBC example, and the ciphertext by key.
+# F.2.1/F.2.2 are AES-128, F.2.3/F.2.4 AES-192 and F.2.5/F.2.6 AES-256; each decrypt example reverses its encrypt one.
+_SP800_38A_IV = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
+_SP800_38A_PLAINTEXT = bytes.fromhex(
+    "6bc1bee22e409f96e93d7e117393172a"
+    "ae2d8a571e03ac9c9eb76fac45af8e51"
+    "30c81c46a35ce411e5fbc1191a0a52ef"
+    "f69f2445df4f9b17ad2b417be66c3710"
+)
+_SP800_38A_CBC = (
+    (
+        "F.2.1/F.2.2",
+        "2b7e151628aed2a6abf7158809cf4f3c",
+        "7649abac8119b246cee98e9b12e9197d"
+        "5086cb9b507219ee95db113a917678b2"
+        "73bed6b8e3c1743b7116e69e22229516"
+        "3ff1caa1681fac09120eca307586e1a7",
+    ),
+    (
+        "F.2.3/F.2.4",
+        "8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b",
+        "4f021db243bc633d7178183a9fa071e8"
+        "b4d9ada9ad7dedf4e5e738763f69145a"
+        "571b242012fb7ae07fa9baac3df102e0"
+        "08b0e27988598881d920a9e64f5615cd",
+    ),
+    (
+        "F.2.5/F.2.6",
+        "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4",
+        "f58c4c04d6e5f1ba779eabfb5f7bfbd6"
+        "9cfc4e967edb808d679f777bc6702c7d"
+        "39f23369a9d9bacfa530e26304231461"
+        "b2eb05e2c39be9fcda6c19078c6a9d1b",
+    ),
+)
+
+
+class TestAesCbcNoPadding(unittest.TestCase):
+    """AES-CBC without padding, for key-wrap constructions such as id-alg-PWRI-KEK (RFC 3211 Section 2.3)."""
+
+    def test_nist_sp_800_38a_f2_vectors(self):
+        """GIVEN NIST SP 800-38A F.2.1 to F.2.6 / WHEN encrypted and decrypted / THEN the values of NIST."""
+        iv, plaintext = _SP800_38A_IV, _SP800_38A_PLAINTEXT
+        for example, key_hex, ciphertext_hex in _SP800_38A_CBC:
+            key, ciphertext = bytes.fromhex(key_hex), bytes.fromhex(ciphertext_hex)
+            with self.subTest(example=example):
+                self.assertEqual(primitives.aes_cbc_encrypt_no_padding(key, iv, plaintext), ciphertext)
+                self.assertEqual(primitives.aes_cbc_decrypt_no_padding(key, iv, ciphertext), plaintext)
+                # cryptography as an independent check of the transcription.
+                encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+                self.assertEqual(encryptor.update(plaintext) + encryptor.finalize(), ciphertext)
+
+    def test_one_block_is_the_first_block_of_nist(self):
+        """GIVEN the first block of F.2.1 / WHEN encrypted / THEN the 16 octets of the first block of NIST, no more."""
+        _, key_hex, ciphertext_hex = _SP800_38A_CBC[0]
+        key = bytes.fromhex(key_hex)
+        ciphertext = primitives.aes_cbc_encrypt_no_padding(key, _SP800_38A_IV, _SP800_38A_PLAINTEXT[:16])
+        self.assertEqual(ciphertext.hex(), ciphertext_hex[:32])
+
+    def test_wrong_sizes_are_value_errors(self):
+        """GIVEN a wrong key, IV or data size / WHEN encrypted or decrypted / THEN ValueError."""
+        cases = (
+            ("15 octet key", bytes(15), bytes(16), bytes(16)),
+            ("64 octet key (AES-256-XTS)", bytes(64), bytes(16), bytes(16)),
+            ("12 octet IV", bytes(16), bytes(12), bytes(16)),
+            ("17 octet IV", bytes(16), bytes(17), bytes(16)),
+            ("empty data", bytes(16), bytes(16), b""),
+            ("15 octets of data", bytes(16), bytes(16), bytes(15)),
+            ("17 octets of data", bytes(16), bytes(16), bytes(17)),
+        )
+        for function in (primitives.aes_cbc_encrypt_no_padding, primitives.aes_cbc_decrypt_no_padding):
+            for name, key, iv, data in cases:
+                with self.subTest(function=function.__name__, case=name), self.assertRaises(ValueError):
+                    function(key, iv, data)
 
 
 class TestAesGcm(unittest.TestCase):

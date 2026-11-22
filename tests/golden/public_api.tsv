@@ -21,6 +21,8 @@ SigAlgInfo
 SignKey
 TradVerifyKey
 VerifyKey
+aes_cbc_decrypt_no_padding
+aes_cbc_encrypt_no_padding
 check_consistency_sig_alg_id_and_key
 cms_digest_algs
 compute_decaps
