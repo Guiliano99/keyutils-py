@@ -674,7 +674,8 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
     ------
           - `InvalidKeyData`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
           - `BadAsn1Data`: If the DER bytes have a remainder.
-          - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown.
+          - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown, or `cryptography`
+            cannot load the algorithm or its parameters (e.g. an EC curve it does not support).
           - `MissingOQSDependencyError`: If the algorithm needs `liboqs`, which is not installed.
 
     Examples:
