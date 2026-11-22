@@ -169,6 +169,37 @@ def check_consistency_sig_alg_id_and_key(
     _check_key_matches(info, key)
 
 
+def _has_explicit_pss_default(parameters: Any) -> bool:
+    """Tell whether DER ``RSASSA-PSS-params`` encode a field at its DEFAULT value (RFC 4055 Section 3.1).
+
+    The fields are hashAlgorithm ``sha1Identifier``, maskGenAlgorithm ``mgf1SHA1Identifier``, saltLength 20 and
+    trailerField 1. DER omits a DEFAULT value (ITU-T X.690 Section 11.5), so a DER-only reader refuses it. The
+    parameters are read the way the key loader sees them, as the DER of ``parameters``.
+    """
+    params, _ = try_decode_pyasn1(encode_to_der(parameters), rfc4055.RSASSA_PSS_params())
+    hash_alg, mask_gen, salt, trailer = (
+        params.getComponentByName(name, default=None, instantiate=False)
+        for name in ("hashAlgorithm", "maskGenAlgorithm", "saltLength", "trailerField")
+    )
+
+    def der_of_parameters(alg_id: Any) -> bytes:
+        return encode_to_der(alg_id["parameters"]) if alg_id["parameters"].isValue else b""
+
+    def is_default(alg_id: Any, default: rfc5280.AlgorithmIdentifier) -> bool:
+        return (
+            alg_id is not None
+            and alg_id["algorithm"] == default["algorithm"]
+            and der_of_parameters(alg_id) == der_of_parameters(default)
+        )
+
+    return (
+        is_default(hash_alg, rfc4055.sha1Identifier)
+        or is_default(mask_gen, rfc4055.mgf1SHA1Identifier)
+        or (salt is not None and int(salt) == 20)
+        or (trailer is not None and int(trailer) == 1)
+    )
+
+
 def check_consistency_sig_alg_id_and_spki(
     alg_id: rfc9480.AlgorithmIdentifier, spki: rfc5280.SubjectPublicKeyInfo
 ) -> None:
@@ -205,7 +236,17 @@ def check_consistency_sig_alg_id_and_spki(
     both the explicit and the absent form, and the signature parameters are read without the DER rule. The
     parameters of the key are DER: a generator omits the SHA-1 hashAlgorithm, MGF1 with SHA-1 and trailerField 1
     (Section 3.1) and DER does not encode a DEFAULT value (ITU-T X.690 Section 11.5), so the key loader, a DER-only
-    reader, refuses the explicit form. That is a ``BadSigAlgIDParams``, chained to the error of the loader.
+    reader, refuses the explicit form. That is a ``BadSigAlgIDParams``, chained to the error of the loader. Only an
+    explicit DEFAULT (hashAlgorithm ``sha1Identifier``, maskGenAlgorithm ``mgf1SHA1Identifier``, saltLength 20,
+    trailerField 1) is relabelled; a key that the loader refuses although the parameters are readable and carry no
+    explicit DEFAULT (corrupt key bits) keeps the ``ValueError`` of the loader.
+
+    This is a second known disagreement with RFC 4055 Section 3.1, next to the MGF1 hash policy above. For
+    maskGenAlgorithm the RFC says: "Although mfg1SHA1Identifier is defined as the default value for this field,
+    implementations MUST accept both the default value encoding (i.e., an absent field) and mfg1SHA1Identifier to be
+    explicitly present in the encoding." (For hashAlgorithm and trailerField it says that a validator MUST recognize
+    both the explicit and the absent form.) The key side refuses the explicit form, because the key loader
+    (``cryptography``) reads DER only; the signature side accepts both.
 
     :param alg_id: The signature algorithm identifier.
     :param spki: The ``SubjectPublicKeyInfo`` of the key.
@@ -226,8 +267,8 @@ def check_consistency_sig_alg_id_and_spki(
     try:
         key = load_public_key_from_spki(spki)
     except ValueError as err:
-        if key_pss_params is None:
-            raise
+        if key_pss_params is None or not _has_explicit_pss_default(key_alg_id["parameters"]):
+            raise  # no parameters, or readable ones without an explicit DEFAULT: the key itself is the problem
         # The parameters are readable, but `cryptography` refuses the key: its DER parser does not take a DEFAULT value
         # that is encoded explicitly (the reader of this package does, as RFC 4055 Section 3.1 asks for signatures).
         raise BadSigAlgIDParams(
