@@ -9,8 +9,11 @@ BadSigAlgIDParams
 DSAPublicKey
 Encrypted
 IntegrityError
+InvalidKeyData
 KeyUtilsError
+ML_DSA_PRE_HASH_OID_2_NAME
 MissingOQSDependencyError
+PURE_PQ_SIG_NAME_2_OID
 PublicKey
 RSA_OID_2_NAME
 SIG_ALG_OID_2_INFO
@@ -19,9 +22,11 @@ SignKey
 TradVerifyKey
 VerifyKey
 check_consistency_sig_alg_id_and_key
+cms_digest_algs
 compute_decaps
 compute_ecdh
 compute_encaps
+compute_hash
 compute_mac
 decrypt_content
 decrypt_data_with_public_key_alg_id

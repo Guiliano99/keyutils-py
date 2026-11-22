@@ -130,6 +130,31 @@ class TestPublicApi(unittest.TestCase):
                     self.assertIn(name, keyutils_py.__all__)
                     self.assertIs(getattr(keyutils_py, name), getattr(module, name))
 
+    def test_names_that_pkixutils_imports_from_a_submodule_are_exported(self):
+        """GIVEN the 5 names pkixutils reaches by module path / WHEN imported top-level / THEN the same objects."""
+        from keyutils_py import (
+            ML_DSA_PRE_HASH_OID_2_NAME,
+            PURE_PQ_SIG_NAME_2_OID,
+            InvalidKeyData,
+            cms_algs,
+            cms_digest_algs,
+            compute_hash,
+            exceptions,
+            oids,
+        )
+
+        pairs = {
+            "compute_hash": (compute_hash, oids.compute_hash),
+            "ML_DSA_PRE_HASH_OID_2_NAME": (ML_DSA_PRE_HASH_OID_2_NAME, oids.ML_DSA_PRE_HASH_OID_2_NAME),
+            "PURE_PQ_SIG_NAME_2_OID": (PURE_PQ_SIG_NAME_2_OID, cms_algs.PURE_PQ_SIG_NAME_2_OID),
+            "cms_digest_algs": (cms_digest_algs, cms_algs.cms_digest_algs),
+            "InvalidKeyData": (InvalidKeyData, exceptions.InvalidKeyData),
+        }
+        for name, (exported, defined) in pairs.items():
+            with self.subTest(name=name):
+                self.assertIn(name, keyutils_py.__all__)
+                self.assertIs(exported, defined)
+
     def test_the_mechanisms_and_their_types_are_exported(self):
         """GIVEN the names of keyutils_py.mechanisms / WHEN looked up / THEN they are top-level, the same objects."""
         from keyutils_py import exceptions, mechanisms

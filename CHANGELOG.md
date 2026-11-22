@@ -165,6 +165,9 @@ SPDX-License-Identifier: Apache-2.0 -->
   label is at most `keyutils_py.compute.MAX_OAEP_LABEL_LENGTH` (4096) octets, and the parameters themselves must be
   present (the empty SEQUENCE for all defaults). Verified against `openssl cms -encrypt` files (OAEP with SHA-1, SHA-256,
   SHA-384 with an MGF1 over SHA-256, and PKCS#1 v1.5) and against `cryptography`'s own OAEP with labels.
+- Exported from `keyutils_py`: `compute_hash` and `ML_DSA_PRE_HASH_OID_2_NAME` (`keyutils_py.oids`),
+  `cms_digest_algs` and `PURE_PQ_SIG_NAME_2_OID` (`keyutils_py.cms_algs`) and `InvalidKeyData`
+  (`keyutils_py.exceptions`). pkixutils imported them by module path; it can now use the public API.
 
 ## Changed
 
