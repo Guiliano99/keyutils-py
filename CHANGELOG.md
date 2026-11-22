@@ -280,6 +280,8 @@ SPDX-License-Identifier: Apache-2.0 -->
   `cryptography` cannot load, for example an unknown algorithm OID or an EC key on a curve it does not support such as
   secp112r1. The `UnsupportedAlgorithm` of `cryptography` escaped before; it is the cause of the `BadAlg` now, so a
   caller that catches `KeyUtilsError` needs no `cryptography` import for this case.
+- `compute_ecdh` raises `BadAlg` in the same way when it is given a `CMPCertificate` whose key `cryptography` cannot
+  load; it read the certificate's key without `load_public_key_from_spki` and let `UnsupportedAlgorithm` escape.
 
 # 0.0.2
 
