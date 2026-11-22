@@ -40,6 +40,7 @@ generate_key
 get_hash_from_oid
 get_key_name
 get_sig_alg_info
+id_alg_PWRI_KEK
 kdf_derive
 list_algorithms
 load_private_key_from_file

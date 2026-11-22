@@ -5,6 +5,7 @@
 
 import unittest
 
+import keyutils_py
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from keyutils_py import load_private_key_from_one_asym_key, load_public_key_from_spki, prepare_spki
@@ -14,6 +15,7 @@ from keyutils_py.oids import (
     KEM_OID_2_NAME,
     PQ_KEM_OID_2_NAME,
     id_alg,
+    id_alg_PWRI_KEK,
     id_rsa_kem_spki,
     may_return_oid_to_name,
 )
@@ -102,6 +104,16 @@ class TestRsaKemSpkiOid(unittest.TestCase):
         loaded = load_private_key_from_one_asym_key(der)
         self.assertIsInstance(loaded, RSADecapKey)
         self.assertEqual(loaded.public_key().get_oid(), rfc9690.id_rsa_kem_spki)
+
+
+class TestPwriKekOid(unittest.TestCase):
+    """``id_alg_PWRI_KEK`` is the OID of RFC 3211 Section 2.3."""
+
+    def test_constant_is_the_rfc_3211_oid(self):
+        """GIVEN the PWRI-KEK constant / WHEN compared with RFC 3211 Section 2.3 / THEN it is id-alg 9, exported."""
+        self.assertEqual(str(id_alg_PWRI_KEK), "1.2.840.113549.1.9.16.3.9")
+        self.assertEqual(id_alg_PWRI_KEK, id_alg + (9,))
+        self.assertIs(keyutils_py.id_alg_PWRI_KEK, id_alg_PWRI_KEK)
 
 
 if __name__ == "__main__":
