@@ -76,6 +76,7 @@ the ``pq`` extra. Without it, those entry points raise
 
 from keyutils_py.algorithms import AlgInfo, list_algorithms
 from keyutils_py.asn1utils import encode_to_der, try_decode_pyasn1
+from keyutils_py.cms_algs import PURE_PQ_SIG_NAME_2_OID, cms_digest_algs
 from keyutils_py.compute import (
     compute_decaps,
     compute_ecdh,
@@ -94,6 +95,7 @@ from keyutils_py.exceptions import (
     BadSigAlgID,
     BadSigAlgIDParams,
     IntegrityError,
+    InvalidKeyData,
     KeyUtilsError,
     MissingOQSDependencyError,
 )
@@ -129,9 +131,11 @@ from keyutils_py.mechanisms import (
     wrap_key_length,
 )
 from keyutils_py.oids import (
+    ML_DSA_PRE_HASH_OID_2_NAME,
     RSA_OID_2_NAME,
     SIG_ALG_OID_2_INFO,
     SigAlgInfo,
+    compute_hash,
     get_hash_from_oid,
     get_sig_alg_info,
     sha_alg_name_to_oid,
@@ -157,6 +161,10 @@ __all__ = [
     "SIG_ALG_OID_2_INFO",
     "get_sig_alg_info",
     "list_algorithms",
+    "ML_DSA_PRE_HASH_OID_2_NAME",
+    # CMS digests of a signing key
+    "cms_digest_algs",
+    "PURE_PQ_SIG_NAME_2_OID",
     # Mechanisms by AlgorithmIdentifier
     "AlgInfo",
     "AlgKind",
@@ -180,6 +188,7 @@ __all__ = [
     "decrypt_data_with_public_key_alg_id",
     # AlgorithmIdentifier builders and hashes
     "prepare_hash_alg_id",
+    "compute_hash",
     "get_hash_from_oid",
     "sha_alg_name_to_oid",
     "RSA_OID_2_NAME",
@@ -212,5 +221,6 @@ __all__ = [
     "BadSigAlgID",
     "BadSigAlgIDParams",
     "IntegrityError",
+    "InvalidKeyData",
     "MissingOQSDependencyError",
 ]
