@@ -183,6 +183,14 @@ SPDX-License-Identifier: Apache-2.0 -->
   the signature's hashAlgorithm and MGF1 hash must equal the key's and its saltLength must be greater or equal
   (Section 3.3 case 3, `BadSigAlgIDParams` otherwise). Absent fields are compared as their DEFAULT values. An
   `rsaEncryption` key or an `id-RSASSA-PSS` key without parameters needs no parameter validation (cases 1 and 2).
+  The parameters of an `id-RSASSA-PSS` key are read before the key is loaded (`BadSigAlgIDParams` if they cannot be
+  read), and a key that `cryptography` refuses although its parameters are readable is `BadSigAlgIDParams` chained to
+  the loader's `ValueError`, not a bare `ValueError`: the usual cause is a DEFAULT value encoded explicitly, which
+  is not DER (RFC 4055 Section 3.1 has a generator omit it, ITU-T X.690 Section 11.5) and which the DER-only key loader
+  refuses. Explicit DEFAULTs are accepted in the parameters of the signature only. Known disagreement with RFC 4055:
+  the reader refuses an MGF1 hash that differs from hashAlgorithm, on the key side and on the signature side, where
+  Section 3.1 only says that the same hash is "strongly RECOMMENDED". That is the policy of keyutils, and it is why
+  comparing the hashAlgorithm also compares the MGF1 hash.
 - `is_public_key_oid(oid)`, exported from `keyutils_py` (`keyutils_py.keyutils`), tells whether an OID (an
   `ObjectIdentifier` or its dotted string) is the algorithm of a SubjectPublicKeyInfo that `load_public_key_from_spki`
   loads. It reads the tables the loader dispatches on, so a consumer needs no copy of them: `True` for `rsaEncryption`,

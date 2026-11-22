@@ -173,8 +173,9 @@ def check_consistency_sig_alg_id_and_spki(
 ) -> None:
     """Check that a signature ``AlgorithmIdentifier`` may be used with the key of ``spki`` (RFC 4055).
 
-    Loads the key and runs :func:`check_consistency_sig_alg_id_and_key`. The key loaded from an ``id-RSASSA-PSS``
-    SPKI is a plain RSA key without its ``RSASSA-PSS-params``, so the rules of RFC 4055 are applied to the SPKI:
+    Reads the parameters of an ``id-RSASSA-PSS`` key (see below), loads the key and runs
+    :func:`check_consistency_sig_alg_id_and_key`. The key loaded from an ``id-RSASSA-PSS`` SPKI is a plain RSA key
+    without its ``RSASSA-PSS-params``, so the rules of RFC 4055 are applied to the SPKI:
 
     * Section 1.2: "When a certificate conveys an RSA public key with the id-RSASSA-PSS object identifier, the
       certificate user MUST only use the certified RSA public key for RSASSA-PSS operations". A PKCS#1 v1.5 or
@@ -185,21 +186,58 @@ def check_consistency_sig_alg_id_and_spki(
       algorithm identifier MUST match the parameters in the key structure algorithm identifier except the
       saltLength field. The saltLength field in the signature parameters MUST be greater or equal to that in the
       key parameters field." Both sides are read as ``RSASSA-PSS-params`` with the DEFAULT values of Section 3.1,
-      so an absent field equals its explicit default. hashAlgorithm and the MGF1 hash are compared; the mask
-      generation function is MGF1 and trailerField is 1 on both sides, because reading the parameters refuses any
-      other value. A SHAKE RSASSA-PSS identifier (RFC 8702) has no parameters, so it matches no key parameters.
+      so an absent field equals its explicit default. The parameters of the key are read before the key is
+      loaded, so that an unreadable field is a ``BadSigAlgIDParams`` and not whatever the key loader raises.
+
+    The reader of the parameters decides these points, so the comparison does not repeat them:
+
+    * The mask generation function is MGF1 and trailerField is 1 on both sides, or the reader refuses the
+      parameters.
+    * The MGF1 hash equals hashAlgorithm on both sides, or the reader refuses the parameters. That is the policy of
+      keyutils; RFC 4055 Section 3.1 only says that it is "strongly RECOMMENDED" (the underlying hash function of
+      MGF1 be the one of hashAlgorithm), so keyutils disagrees with the RFC here on purpose: a pair with different
+      hashes is a ``BadSigAlgIDParams`` on either side. Comparing hashAlgorithm therefore compares the MGF1 hash
+      too; the pair is still compared, so the check stays right if that policy is ever relaxed.
+    * A SHAKE RSASSA-PSS identifier (RFC 8702) has no parameters, so it matches no key parameters.
+
+    Explicit DEFAULT values are accepted on the signature side only. RFC 4055 Section 3.1 has a verifier recognise
+    both the explicit and the absent form, and the signature parameters are read without the DER rule. The
+    parameters of the key are DER: a generator omits the SHA-1 hashAlgorithm, MGF1 with SHA-1 and trailerField 1
+    (Section 3.1) and DER does not encode a DEFAULT value (ITU-T X.690 Section 11.5), so the key loader, a DER-only
+    reader, refuses the explicit form. That is a ``BadSigAlgIDParams``, chained to the error of the loader.
 
     :param alg_id: The signature algorithm identifier.
     :param spki: The ``SubjectPublicKeyInfo`` of the key.
     :raises BadSigAlgID: If the key does not match ``alg_id``, or an ``id-RSASSA-PSS`` key is used with an
         identifier that is not RSASSA-PSS.
-    :raises BadSigAlgIDParams: In case 3, if the parameters of either side cannot be read (see
-        :func:`validate_sig_alg_id`) or the signature parameters do not match the key parameters.
+    :raises BadSigAlgIDParams: If the parameters of an ``id-RSASSA-PSS`` key cannot be read (see
+        :func:`validate_sig_alg_id`) or are not DER (an explicit DEFAULT value), or, in case 3, the parameters of the
+        signature cannot be read or do not match those of the key.
     :raises BadAlg: If the key cannot be loaded; :func:`load_public_key_from_spki` names the other errors.
     """
-    check_consistency_sig_alg_id_and_key(alg_id, load_public_key_from_spki(spki))
     key_alg_id = spki["algorithm"]
-    if key_alg_id["algorithm"] != rfc9481.id_RSASSA_PSS:
+    is_pss_key = key_alg_id["algorithm"] == rfc9481.id_RSASSA_PSS
+    key_pss_params = (
+        _read_rsassa_pss_parameters(key_alg_id["parameters"])
+        if is_pss_key and key_alg_id["parameters"].isValue
+        else None
+    )
+    try:
+        key = load_public_key_from_spki(spki)
+    except ValueError as err:
+        if key_pss_params is None:
+            raise
+        # The parameters are readable, but `cryptography` refuses the key: its DER parser does not take a DEFAULT value
+        # that is encoded explicitly (the reader of this package does, as RFC 4055 Section 3.1 asks for signatures).
+        raise BadSigAlgIDParams(
+            "The id-RSASSA-PSS key cannot be loaded although its parameters can be read. They are not DER, most likely "
+            "because a DEFAULT value is encoded explicitly: RFC 4055 Section 3.1 has a generator omit it (SHA-1, "
+            "MGF1 with SHA-1, trailerField 1), DER does not encode a DEFAULT value, and the DER-only reader of the "
+            "key loader refuses the explicit form.",
+            error_details=[str(err)],
+        ) from err
+    check_consistency_sig_alg_id_and_key(alg_id, key)
+    if not is_pss_key:
         return
     sig_oid = alg_id["algorithm"]
     if not get_sig_alg_info(sig_oid).pss:
@@ -207,7 +245,7 @@ def check_consistency_sig_alg_id_and_spki(
             "An id-RSASSA-PSS key may only be used for RSASSA-PSS signatures (RFC 4055 Section 1.2).",
             error_details=[f"signature algorithm {may_return_oid_to_name(sig_oid)}"],
         )
-    if not key_alg_id["parameters"].isValue:
+    if key_pss_params is None:
         return
     if sig_oid != rfc9481.id_RSASSA_PSS:
         raise BadSigAlgIDParams(
@@ -216,7 +254,7 @@ def check_consistency_sig_alg_id_and_spki(
             error_details=[f"signature algorithm {may_return_oid_to_name(sig_oid)}"],
         )
     sig_hash, sig_mgf1_hash, sig_salt = _read_rsassa_pss_parameters(alg_id["parameters"])
-    key_hash, key_mgf1_hash, key_salt = _read_rsassa_pss_parameters(key_alg_id["parameters"])
+    key_hash, key_mgf1_hash, key_salt = key_pss_params
     if (sig_hash, sig_mgf1_hash) != (key_hash, key_mgf1_hash):
         raise BadSigAlgIDParams(
             "The RSASSA-PSS parameters of the signature do not match those of the key (RFC 4055 Section 3.3).",

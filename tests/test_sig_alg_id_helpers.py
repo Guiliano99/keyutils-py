@@ -244,6 +244,59 @@ class TestCheckConsistencySpki(unittest.TestCase):
                     check_consistency_sig_alg_id_and_spki(alg_id, spki)
                 self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
 
+    def test_explicit_default_in_the_key_parameters_is_bad_sig_alg_id_params(self):
+        """GIVEN a PSS SPKI whose parameters encode the DEFAULT values explicitly (not DER), as built and as DER /
+        WHEN checked against a matching PSS identifier / THEN BadSigAlgIDParams chained to the loader's ValueError,
+        and not that bare ValueError (RFC 4055 Section 3.1 leaves a DEFAULT out of the generated encoding).
+        """
+        explicit = _explicit_default_pss_params()
+        sig_alg_id = _alg_id(rfc9481.id_RSASSA_PSS, explicit)  # the signature side takes the explicit form
+        for key_params in (explicit, univ.Any(encoder.encode(explicit))):
+            with self.subTest(key_params=type(key_params).__name__):
+                spki = _pss_spki(self.public_key, key_params)
+                with self.assertRaises(BadSigAlgIDParams) as ctx:
+                    check_consistency_sig_alg_id_and_spki(sig_alg_id, spki)
+                self.assertIsInstance(ctx.exception.__cause__, ValueError)
+                self.assertIn("DER", str(ctx.exception))
+                self.assertIn("DEFAULT", str(ctx.exception))
+        check_consistency_sig_alg_id_and_spki(sig_alg_id, _pss_spki(self.public_key, rfc4055.rSASSA_PSS_Default_Params))
+
+    def test_unreadable_key_parameters_are_bad_sig_alg_id_params(self):
+        """GIVEN a PSS SPKI with parameters that are no RSASSA-PSS-params, have trailing data, a trailerField other
+        than 1 or an MGF1 hash that differs from the hash / WHEN checked against PSS or against PKCS#1 v1.5 / THEN
+        BadSigAlgIDParams, because the key parameters are read before the key is loaded and before the identifier
+        is compared (the PKCS#1 v1.5 identifier is BadSigAlgID only for a key whose parameters can be read).
+        """
+        trailer_2 = rfc4055.RSASSA_PSS_params()
+        trailer_2["trailerField"] = 2
+        valid = encoder.encode(rfc4055.rSASSA_PSS_Default_Params)
+        unreadable = {
+            "NULL": univ.Any(b"\x05\x00"),
+            "octet string": univ.Any(encoder.encode(univ.OctetString(b"junk"))),
+            "trailing data": univ.Any(valid + b"\x00"),
+            "trailerField 2": trailer_2,
+            "MGF1 hash differs": prepare_rsa_pss_alg_id("sha256", salt_length=32, mgf1_hash_alg="sha512")["parameters"],
+        }
+        for name, key_params in unreadable.items():
+            spki = _pss_spki(self.public_key, key_params)
+            for alg_id in (
+                prepare_rsa_pss_alg_id("sha256", salt_length=32),
+                _alg_id(rfc9481.sha256WithRSAEncryption, univ.Null("")),
+            ):
+                with self.subTest(key_params=name, oid=str(alg_id["algorithm"])):
+                    with self.assertRaises(BadSigAlgIDParams):
+                        check_consistency_sig_alg_id_and_spki(alg_id, spki)
+
+    def test_a_key_that_cannot_be_loaded_for_another_reason_keeps_its_error(self):
+        """GIVEN a PSS SPKI without parameters and key bits that are no RSAPublicKey / WHEN checked / THEN the
+        loader's ValueError, which is no parameter error (only readable parameters make it a BadSigAlgIDParams).
+        """
+        spki = _pss_spki(self.public_key)
+        spki["subjectPublicKey"] = univ.BitString.fromOctetString(b"\x30\x03\x02\x01\x00")
+        with self.assertRaises(ValueError) as ctx:
+            check_consistency_sig_alg_id_and_spki(prepare_rsa_pss_alg_id("sha256"), spki)
+        self.assertNotIsInstance(ctx.exception, BadSigAlgIDParams)
+
 
 class TestValidateSigAlgId(unittest.TestCase):
     """``validate_sig_alg_id`` is strict by default and lenient with ``strict=False``, like the verifier."""
