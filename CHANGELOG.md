@@ -272,6 +272,10 @@ SPDX-License-Identifier: Apache-2.0 -->
 - `SIG_ALG_OID_2_PARAMETERS_SPEC` is derived from the signature algorithm table and has the 81 entries of its rows.
 - The private `compute._validate_sig_alg_id`, `compute._resolve_sig_alg_name`, `compute._check_eddsa_oid_matches_key` and
   `keyutils._check_trad_sig_alg_id` are gone; their checks are in `get_sig_alg_info` and `compute._check_key_matches`.
+- The README, `CONTEXT.md` and ADR 0006 (as an amendment of 2026-11-22) say that `keyutils_py.primitives` is not public
+  API except for `aes_cbc_encrypt_no_padding` and `aes_cbc_decrypt_no_padding`, which are exported for key-wrap
+  constructions built outside keyutils, such as id-alg-PWRI-KEK (RFC 3211 Section 2.3). They said that no primitive is
+  public.
 
 ## Fixed
 

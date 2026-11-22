@@ -75,8 +75,10 @@ _Avoid_: primitive, algorithm function
 
 **Lower layer**:
 `keyutils_py.primitives`: functions by the name of the hash on plain bytes, with no identifier, no OID and no limit on a
-size. It is importable and not public API; a test uses it to make what a mechanism refuses.
-_Avoid_: public primitives
+size. It is importable and not public API; a test uses it to make what a mechanism refuses. The exception is the
+unpadded AES-CBC pair (`aes_cbc_encrypt_no_padding`, `aes_cbc_decrypt_no_padding`), which is exported for key-wrap
+constructions such as id-alg-PWRI-KEK (RFC 3211 Section 2.3) that are built outside keyutils.
+_Avoid_: public primitives (the unpadded AES-CBC pair apart)
 
 **Pre-hash OID**:
 A signature OID that names the hash of the HashML-DSA or HashSLH-DSA mode (for example
