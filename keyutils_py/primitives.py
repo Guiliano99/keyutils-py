@@ -11,7 +11,9 @@ therefore the way to produce what a mechanism refuses on purpose, for example a 
 identifier that is written next to it, and the way to check a mechanism against an independent computation.
 
 The module imports ``cryptography``, ``pycryptodome`` (for KMAC) and :mod:`keyutils_py.exceptions` only, which a test
-checks. It is importable but not part of the public API (:data:`keyutils_py.__all__`).
+checks. It is importable but not part of the public API (:data:`keyutils_py.__all__`), apart from
+:func:`aes_cbc_encrypt_no_padding` and :func:`aes_cbc_decrypt_no_padding`, which key-wrap constructions above
+keyutils need and no mechanism offers.
 
 Errors: a hash name that is no fixed-output hash is :class:`~keyutils_py.exceptions.BadAlg`; an unwrap, a CBC padding or
 a GCM tag that does not verify is :class:`~keyutils_py.exceptions.IntegrityError`, with a message that does not say
@@ -188,6 +190,48 @@ def aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
         return unpadder.update(padded) + unpadder.finalize()
     except ValueError:
         raise IntegrityError("AES-CBC decryption failed.") from None
+
+
+def _check_whole_blocks(data: bytes) -> None:
+    """Refuse data that is empty or no multiple of the AES block size.
+
+    :raises ValueError: If ``data`` is empty or its length is no multiple of 16 octets.
+    """
+    if not data or len(data) % (_BLOCK_BITS // 8):
+        raise ValueError(f"AES-CBC without padding needs a non-empty multiple of 16 octets, got {len(data)}.")
+
+
+def aes_cbc_encrypt_no_padding(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """Encrypt with AES-CBC and no padding.
+
+    Meant for key-wrap constructions that pad on their own, such as id-alg-PWRI-KEK (RFC 3211 Section 2.3). CMS content
+    is not encrypted with it but with :func:`keyutils_py.mechanisms.encrypt_content`, which pads (RFC 5652 Section 6.3).
+
+    :param key: The AES key of 16, 24 or 32 octets.
+    :param iv: The IV of 16 octets.
+    :param data: The plaintext, a non-empty multiple of 16 octets.
+    :return: The ciphertext, as long as ``data``.
+    :raises ValueError: If the key, the IV or the data has a wrong size.
+    """
+    _check_whole_blocks(data)
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return encryptor.update(data) + encryptor.finalize()
+
+
+def aes_cbc_decrypt_no_padding(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """Decrypt AES-CBC and remove no padding; the counterpart of :func:`aes_cbc_encrypt_no_padding`.
+
+    Nothing is checked after the decryption: the key-wrap construction that uses it checks its own format.
+
+    :param key: The AES key of 16, 24 or 32 octets.
+    :param iv: The IV of 16 octets.
+    :param data: The ciphertext, a non-empty multiple of 16 octets.
+    :return: The plaintext, as long as ``data``.
+    :raises ValueError: If the key, the IV or the data has a wrong size.
+    """
+    _check_whole_blocks(data)
+    decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+    return decryptor.update(data) + decryptor.finalize()
 
 
 def aes_gcm_encrypt(key: bytes, nonce: bytes, plaintext: bytes, aad: Optional[bytes] = None) -> Tuple[bytes, bytes]:

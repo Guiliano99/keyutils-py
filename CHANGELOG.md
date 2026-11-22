@@ -168,6 +168,11 @@ SPDX-License-Identifier: Apache-2.0 -->
 - Exported from `keyutils_py`: `compute_hash` and `ML_DSA_PRE_HASH_OID_2_NAME` (`keyutils_py.oids`),
   `cms_digest_algs` and `PURE_PQ_SIG_NAME_2_OID` (`keyutils_py.cms_algs`) and `InvalidKeyData`
   (`keyutils_py.exceptions`). pkixutils imported them by module path; it can now use the public API.
+- `aes_cbc_encrypt_no_padding(key, iv, data)` and `aes_cbc_decrypt_no_padding(key, iv, data)`, AES-CBC without
+  padding on `cryptography`, for key-wrap constructions that pad on their own, such as id-alg-PWRI-KEK (RFC 3211
+  Section 2.3). They are in `keyutils_py.primitives` and are its only exported functions. A key that is not 16, 24 or
+  32 octets, an IV that is not 16 octets and data that is empty or no multiple of 16 octets are a `ValueError`. CMS
+  content is still encrypted with `encrypt_content`, which pads. Tested with NIST SP 800-38A F.2.1 to F.2.6.
 
 ## Changed
 

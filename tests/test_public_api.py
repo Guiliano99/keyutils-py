@@ -182,14 +182,16 @@ class TestPublicApi(unittest.TestCase):
         self.assertIs(keyutils_py.AlgInfo, algorithms.AlgInfo)
 
     def test_the_lower_layer_is_not_public(self):
-        """GIVEN keyutils_py.primitives / WHEN __all__ is read / THEN neither it nor its functions are listed."""
+        """GIVEN keyutils_py.primitives / WHEN __all__ is read / THEN of it only the unpadded CBC pair is listed."""
         from keyutils_py import primitives
 
         own = {
             name for name, value in vars(primitives).items() if getattr(value, "__module__", "") == primitives.__name__
         }
-        self.assertEqual(own & set(keyutils_py.__all__), set())
+        self.assertEqual(own & set(keyutils_py.__all__), {"aes_cbc_encrypt_no_padding", "aes_cbc_decrypt_no_padding"})
         self.assertNotIn("primitives", keyutils_py.__all__)
+        self.assertIs(keyutils_py.aes_cbc_encrypt_no_padding, primitives.aes_cbc_encrypt_no_padding)
+        self.assertIs(keyutils_py.aes_cbc_decrypt_no_padding, primitives.aes_cbc_decrypt_no_padding)
 
     def test_signatures_of_the_signature_entry_points(self):
         """GIVEN the entry points with keyword-only options / WHEN inspected / THEN the signatures are pinned."""
