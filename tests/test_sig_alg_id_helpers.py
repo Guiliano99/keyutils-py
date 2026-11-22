@@ -360,6 +360,37 @@ class TestCheckConsistencySpki(unittest.TestCase):
                 self.assertIs(_has_explicit_pss_default(parameters), expected)
 
 
+class TestCheckConsistencyCompositeSpki(unittest.TestCase):
+    """``check_consistency_sig_alg_id_and_spki`` ties a composite signature to the OID of the SPKI of its key."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Generate one composite key with an RSA component, which has a PSS and a PKCS#1 v1.5 variant."""
+        cls.public_key = generate_key("composite-sig-ml-dsa-44-rsa2048").public_key()
+        cls.pss_oid = COMPOSITE_SIG_NAME_TO_OID["composite-sig-ml-dsa-44-rsa2048-pss"]
+        cls.pkcs15_oid = COMPOSITE_SIG_NAME_TO_OID["composite-sig-ml-dsa-44-rsa2048"]
+
+    def test_the_signature_has_the_oid_of_the_spki(self):
+        """GIVEN the PSS and the PKCS#1 v1.5 SPKI of one composite key / WHEN checked against the signature with the
+        OID of the SPKI / THEN both pass.
+        """
+        for use_pss, oid in ((True, self.pss_oid), (False, self.pkcs15_oid)):
+            spki = subject_public_key_info_from_pubkey(self.public_key, use_rsa_pss=use_pss)
+            self.assertEqual(str(spki["algorithm"]["algorithm"]), str(oid))
+            with self.subTest(oid=str(oid)):
+                check_consistency_sig_alg_id_and_spki(_alg_id(oid), spki)
+
+    def test_the_other_variant_of_the_combination_is_refused(self):
+        """GIVEN the PSS SPKI of a composite key / WHEN checked against the PKCS#1 v1.5 signature OID of the same
+        combination, and the other way round / THEN BadSigAlgID: the sa-* of draft-ietf-lamps-pq-composite-sigs lists
+        only the pk-* with its own OID as PUBLIC-KEYS, although the key material is the same.
+        """
+        for use_pss, wrong in ((True, self.pkcs15_oid), (False, self.pss_oid)):
+            spki = subject_public_key_info_from_pubkey(self.public_key, use_rsa_pss=use_pss)
+            with self.subTest(wrong=str(wrong)), self.assertRaises(BadSigAlgID):
+                check_consistency_sig_alg_id_and_spki(_alg_id(wrong), spki)
+
+
 class TestValidateSigAlgId(unittest.TestCase):
     """``validate_sig_alg_id`` is strict by default and lenient with ``strict=False``, like the verifier."""
 

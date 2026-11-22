@@ -279,6 +279,11 @@ SPDX-License-Identifier: Apache-2.0 -->
 
 ## Fixed
 
+- `check_consistency_sig_alg_id_and_spki` refuses a composite signature whose OID is not the OID of the SPKI. A
+  composite key with an RSA component is one object for the PSS and the PKCS#1 v1.5 variant, so the key check
+  passed an `id-MLDSA44-RSA2048-PSS-SHA256` SPKI with the `id-MLDSA44-RSA2048-PKCS15-SHA256` signature (and the
+  other way round); draft-ietf-lamps-pq-composite-sigs lists only the pk-* with the same OID as the PUBLIC-KEYS of an
+  sa-*. `BadSigAlgID`.
 - ML-DSA verification (`MLDSAPublicKey.verify`) raises `InvalidSignature` for a signature of the wrong length. The
   pre-hash (HashML-DSA) path accepted a signature with trailing bytes and raised `IndexError` for a short or empty one.
 - Generating a composite key by name raises `InvalidKeyCombination` for a combination that is not allowed,

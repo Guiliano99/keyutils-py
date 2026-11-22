@@ -279,9 +279,20 @@ def check_consistency_sig_alg_id_and_spki(
             error_details=[str(err)],
         ) from err
     check_consistency_sig_alg_id_and_key(alg_id, key)
+    sig_oid = alg_id["algorithm"]
+    if get_sig_alg_info(sig_oid).family == "composite" and key_alg_id["algorithm"] != sig_oid:
+        # A composite key object is the same for the PSS and the PKCS#1 v1.5 variant of its RSA component, so the key
+        # check above passes for both; the OID of the SPKI tells which algorithm the key is for.
+        raise BadSigAlgID(
+            "A composite signature has the OID of the SubjectPublicKeyInfo of its key: "
+            "draft-ietf-lamps-pq-composite-sigs defines each sa-* with its pk-* as PUBLIC-KEYS, and the PSS and the "
+            "PKCS#1 v1.5 variant of a combination have two OIDs.",
+            error_details=[
+                f"key {may_return_oid_to_name(key_alg_id['algorithm'])}, signature {may_return_oid_to_name(sig_oid)}"
+            ],
+        )
     if not is_pss_key:
         return
-    sig_oid = alg_id["algorithm"]
     if not get_sig_alg_info(sig_oid).pss:
         raise BadSigAlgID(
             "An id-RSASSA-PSS key may only be used for RSASSA-PSS signatures (RFC 4055 Section 1.2).",
