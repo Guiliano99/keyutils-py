@@ -198,6 +198,8 @@ class CombinedKeyFactory:
         :return: The loaded public key.
         :raises BadAlg: If ``cryptography`` cannot load the algorithm or its parameters, e.g. an unknown OID or an EC
             curve that it does not support (its ``UnsupportedAlgorithm`` is the cause).
+        :raises InvalidKeyData: If the key data does not have the form of its algorithm, e.g. an EC point that is not
+            on the curve (the ``ValueError`` of ``cryptography`` is the cause).
         """
         if isinstance(spki, bytes):
             # The decoder returns Any, which would leave ``spki`` typed as the union; name the decoded type.
@@ -224,6 +226,11 @@ class CombinedKeyFactory:
             return TradKeyFactory.load_public_key_from_spki(spki)
         except UnsupportedAlgorithm as err:
             raise BadAlg(f"The public key cannot be loaded ({may_return_oid_to_name(oid)}): {err}") from err
+        except ValueError as err:
+            # The loaders of `cryptography` give a bare ValueError for key data of the wrong form: an EC point that is
+            # not on the curve or has the wrong length, an EdDSA or XDH key of the wrong length, an RSAPublicKey that
+            # is malformed or has an exponent below 3. The post-quantum and composite loaders already raise this.
+            raise InvalidKeyData(f"The public key cannot be loaded ({may_return_oid_to_name(oid)}): {err}") from err
 
     @staticmethod
     def load_private_key_from_one_asym_key(

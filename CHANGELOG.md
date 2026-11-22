@@ -328,6 +328,14 @@ SPDX-License-Identifier: Apache-2.0 -->
   `cryptography` cannot load, for example an unknown algorithm OID or an EC key on a curve it does not support such as
   secp112r1. The `UnsupportedAlgorithm` of `cryptography` escaped before; it is the cause of the `BadAlg` now, so a
   caller that catches `KeyUtilsError` needs no `cryptography` import for this case.
+- `load_public_key_from_spki` (and `CombinedKeyFactory.load_public_key_from_spki`) raise `InvalidKeyData`, not a bare
+  `ValueError`, for key data that does not have the form of its algorithm: an EC point that is not on the curve or has
+  the wrong length, an Ed25519, Ed448, X25519 or X448 key of the wrong length, an RSAPublicKey that is malformed or
+  has an exponent below 3. The `ValueError` of `cryptography` is the cause. The post-quantum and composite keys
+  raised `InvalidKeyData` already, so every malformed key is a `KeyUtilsError` now. A caller that caught `ValueError`
+  around the loader must catch `InvalidKeyData`: it is not a `ValueError`. `check_consistency_sig_alg_id_and_spki`
+  follows: a corrupt key behind readable RSASSA-PSS-params raises `InvalidKeyData`, and `BadSigAlgIDParams` for an
+  explicit DEFAULT value is chained to it.
 
 # 0.0.2
 

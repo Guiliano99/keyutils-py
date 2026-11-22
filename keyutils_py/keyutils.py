@@ -239,7 +239,7 @@ def check_consistency_sig_alg_id_and_spki(
     reader, refuses the explicit form. That is a ``BadSigAlgIDParams``, chained to the error of the loader. Only an
     explicit DEFAULT (hashAlgorithm ``sha1Identifier``, maskGenAlgorithm ``mgf1SHA1Identifier``, saltLength 20,
     trailerField 1) is relabelled; a key that the loader refuses although the parameters are readable and carry no
-    explicit DEFAULT (corrupt key bits) keeps the ``ValueError`` of the loader.
+    explicit DEFAULT (corrupt key bits) keeps the ``InvalidKeyData`` of the loader.
 
     This is a second known disagreement with RFC 4055 Section 3.1, next to the MGF1 hash policy above. For
     maskGenAlgorithm the RFC says: "Although mfg1SHA1Identifier is defined as the default value for this field,
@@ -266,7 +266,7 @@ def check_consistency_sig_alg_id_and_spki(
     )
     try:
         key = load_public_key_from_spki(spki)
-    except ValueError as err:
+    except InvalidKeyData as err:
         if key_pss_params is None or not _has_explicit_pss_default(key_alg_id["parameters"]):
             raise  # no parameters, or readable ones without an explicit DEFAULT: the key itself is the problem
         # The parameters are readable, but `cryptography` refuses the key: its DER parser does not take a DEFAULT value
@@ -826,7 +826,9 @@ def load_public_key_from_spki(data: Union[bytes, rfc5280.SubjectPublicKeyInfo]):
 
     Raises:
     ------
-          - `InvalidKeyData`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure.
+          - `InvalidKeyData`: If the provided data is not a valid DER-encoded SubjectPublicKeyInfo structure, or the
+            key data does not have the form of its algorithm (an EC point that is not on the curve, an Ed25519 key of
+            the wrong length, a malformed RSAPublicKey); the `ValueError` of `cryptography` is the cause.
           - `BadAsn1Data`: If the DER bytes have a remainder.
           - `BadAlg`: If the public key is incorrectly formatted, or the OID is not valid/unknown, or `cryptography`
             cannot load the algorithm or its parameters (e.g. an EC curve it does not support).
