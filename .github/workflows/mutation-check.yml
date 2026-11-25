@@ -74,6 +74,9 @@ jobs:
         run: |
           pip install --upgrade uv
           ${{ inputs.install-command }}
+      - name: Remove the deploy keys
+        if: always()
+        run: rm -f ~/.ssh/deploy-*
       - name: Inject every defect
         run: ${{ inputs.command }}
       - name: Upload the matrix

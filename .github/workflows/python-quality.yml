@@ -107,6 +107,15 @@ jobs:
     outputs:
       cache-key: ${{ steps.key.outputs.key }}
     steps:
+      - name: Refuse a deploy key in a public repository
+        # A pull request from a fork can restore the cached venv, which holds the code of the private packages.
+        if: ${{ !github.event.repository.private }}
+        env:
+          DEPLOY_KEYS: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}${{ secrets.PKIXCA_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEYS" ]; then exit 0; fi
+          echo "::error::A public repository must not cache private packages. Publish them or remove the deploy keys."
+          exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
@@ -146,6 +155,9 @@ jobs:
           pip install --upgrade uv
           ${{ inputs.install-command }}
           uv pip install --python "$VENV_DIR" uv
+      - name: Remove the deploy keys
+        if: always()
+        run: rm -f ~/.ssh/deploy-*
 
   # The fast checks, each run even when one before it fails.
   checks:

@@ -12,3 +12,5 @@ SPDX-License-Identifier: Apache-2.0 -->
   direct reference and as a `[tool.uv.sources]` git source, also with `--allow-commit-pins`.
 - `python-quality.yml` and `mutation-check.yml` take a second deploy key, `PKIXCA_DEPLOY_KEY`, for the private
   pkixca-py. Each repository is read through an ssh host of its own, as GitHub takes the repository from the key.
+  The keys are removed after the install, and `python-quality.yml` refuses a key in a public repository, where a fork
+  could read the private packages from the cached venv.
