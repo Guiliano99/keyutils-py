@@ -16,6 +16,7 @@
 #         command: make mutation-check
 #       secrets:
 #         PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+#         PKIXCA_DEPLOY_KEY: ${{ secrets.PKIXCA_DEPLOY_KEY }}  # only a caller that depends on pkixca
 name: Mutation check (reusable)
 
 on:
@@ -40,6 +41,8 @@ on:
     secrets:
       PKIXUTILS_DEPLOY_KEY:
         required: false
+      PKIXCA_DEPLOY_KEY:
+        required: false
 
 jobs:
   mutation_check:
@@ -49,17 +52,24 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python-version }}
-      - name: Let git read the private pkixutils-py repository
+      - name: Let git read the private repositories
         env:
           PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+          PKIXCA_DEPLOY_KEY: ${{ secrets.PKIXCA_DEPLOY_KEY }}
         run: |
-          if [ -z "$PKIXUTILS_DEPLOY_KEY" ]; then echo "No deploy key given; pkixutils-py is read over HTTPS."; exit 0; fi
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$PKIXUTILS_DEPLOY_KEY" > ~/.ssh/pkixutils_deploy
-          chmod 600 ~/.ssh/pkixutils_deploy
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-          git config --global url."git@github.com:Guiliano99/pkixutils-py.git".insteadOf "https://github.com/Guiliano99/pkixutils-py.git"
-          echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/pkixutils_deploy -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+          umask 077
+          # GitHub takes the repository from the key, so each repository gets an ssh host of its own with its own key.
+          read_with_key() {
+            if [ -z "$2" ]; then echo "No deploy key given; $1 is read over HTTPS."; return; fi
+            install -m 700 -d ~/.ssh
+            printf '%s\n' "$2" > ~/.ssh/"deploy-$1"
+            printf 'Host github-%s\n  HostName github.com\n  IdentityFile %s\n  IdentitiesOnly yes\n' \
+              "$1" "$HOME/.ssh/deploy-$1" >> ~/.ssh/config
+            ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+            git config --global url."git@github-$1:Guiliano99/$1.git".insteadOf "https://github.com/Guiliano99/$1.git"
+          }
+          read_with_key pkixutils-py "$PKIXUTILS_DEPLOY_KEY"
+          read_with_key pkixca-py "$PKIXCA_DEPLOY_KEY"
       - name: Install the dependencies
         run: |
           pip install --upgrade uv

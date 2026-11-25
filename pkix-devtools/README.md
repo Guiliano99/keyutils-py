@@ -39,10 +39,10 @@ takes `devtools-ref`, the same ref as its `uses:` line, and installs pkix-devtoo
 
 | Workflow | What it runs | Replaces |
 |---|---|---|
-| `python-quality.yml` | a cached venv from the lock (with the pkixutils-py deploy key while that repository is private); ruff, REUSE, codespell, the CHANGELOG entry of the version, `check-config`, `check-pins`, `check-import-boundaries`; pylint, the unit tests, pyright (informational unless `type-check-blocking`), the SBOM, outdated dependencies (informational); with `robot: true` also robocop, the dry run, traceability and the suites against the reference implementation | `check_quality.yml` |
+| `python-quality.yml` | a cached venv from the lock (with the deploy keys of pkixutils-py and pkixca-py that the caller passes, while those repositories are private); ruff, REUSE, codespell, the CHANGELOG entry of the version, `check-config`, `check-pins`, `check-import-boundaries`; pylint, the unit tests, pyright (informational unless `type-check-blocking`), the SBOM, outdated dependencies (informational); with `robot: true` also robocop, the dry run, traceability and the suites against the reference implementation | `check_quality.yml` |
 | `release-tag.yml` | the annotated tag `vX.Y.Z` of the version in `pyproject.toml` | `create_release_tag.yml` |
 | `release-publish.yml` | the GitHub release of a pushed tag with its CHANGELOG notes, and the GitLab release when `gitlab-project-id` is given | `release_on_tag.yml` |
-| `mutation-check.yml` | a suite's mutation check, with the matrix as an artifact | `mutation_check.yml` |
+| `mutation-check.yml` | a suite's mutation check, with the matrix as an artifact; the same deploy keys | `mutation_check.yml` |
 
 The comment at the top of each workflow shows the caller. The keyutils-py jobs that need the liboqs image are not
 covered yet.
