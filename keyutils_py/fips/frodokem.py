@@ -291,7 +291,7 @@ class FrodoKEM(object):
         """Convert a byte array in little-endian format to a little-endian bit
         array
         """
-        b = bitstring.BitArray(length=8 * len(B))
+        b = bitstring.BitArray(bin="0" * (8 * len(B)))
         for i in range(len(B)):
             for l in range(8):
                 b.set((B[i] >> l) % 2, 8 * i + l)
@@ -357,7 +357,7 @@ class FrodoKEM(object):
         """Decode a mod-q integer matrix into a bitstring (represented in Python
         as a bytes object) (FrodoKEM specification, Algorithm 2)
         """
-        k = bitstring.BitArray(length=self.B * self.mbar * self.nbar)
+        k = bitstring.BitArray(bin="0" * (self.B * self.mbar * self.nbar))
         # 1. for i = 0; i < mbar; i += 1
         for i in range(self.mbar):
             # 2. for j = 0; j < nbar; j += 1
@@ -391,7 +391,7 @@ class FrodoKEM(object):
         """
         n1 = len(C)
         n2 = len(C[0])
-        b = bitstring.BitArray(self.D * n1 * n2)
+        b = bitstring.BitArray(bin="0" * (self.D * n1 * n2))
         # 1. for i = 0; i < n1; i += 1
         for i in range(n1):
             # for j = 0; j < n2; j += 1
@@ -653,11 +653,12 @@ class FrodoKEM(object):
         self.__print_intermediate_value("b", b)
         offset += length
         length = int(self.n * self.nbar * 16 / 8)
-        Sbytes = bitstring.ConstBitStream(sk[offset : offset + length])
-        Stransposed = [[0 for j in range(self.n)] for i in range(self.nbar)]
-        for i in range(self.nbar):
-            for j in range(self.n):
-                Stransposed[i][j] = Sbytes.read("intle:16")
+        # S^T is nbar*n signed 16-bit little-endian integers (the former ``intle:16`` read);
+        # bitstring 5 removed ConstBitStream, so use the struct idiom of the rest of this file.
+        Stransposed = [
+            [struct.unpack_from("<h", sk, offset + 2 * (i * self.n + j))[0] for j in range(self.n)]
+            for i in range(self.nbar)
+        ]
         self.__print_intermediate_value("S^T", Stransposed)
         S = self.__matrix_transpose(Stransposed)
         offset += length
