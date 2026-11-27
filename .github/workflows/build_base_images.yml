@@ -45,19 +45,19 @@ jobs:
       # Some contributors have names that contain upper-case characters, but
       # GHCR requires them to be lower-case, so we apply the change here
       - name: Set lowercase GitHub owner
-        run: echo "REPO_OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+        run: echo "REPO_OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Build and push base Docker image
         run: |
           docker buildx build \
-            --tag ghcr.io/${REPO_OWNER_LC}/keyutils-base:latest \
+            --tag "ghcr.io/${REPO_OWNER_LC}/keyutils-base:latest" \
             --push \
             -f data/dockerfiles/Dockerfile.base .
 
       - name: Build and push dev Docker image
         run: |
           docker buildx build \
-            --tag ghcr.io/${REPO_OWNER_LC}/keyutils-dev:latest \
-            --build-arg BASE_IMAGE=ghcr.io/${REPO_OWNER_LC}/keyutils-base:latest \
+            --tag "ghcr.io/${REPO_OWNER_LC}/keyutils-dev:latest" \
+            --build-arg "BASE_IMAGE=ghcr.io/${REPO_OWNER_LC}/keyutils-base:latest" \
             --push \
             -f data/dockerfiles/Dockerfile.dev .

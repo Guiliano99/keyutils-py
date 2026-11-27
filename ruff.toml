@@ -27,6 +27,7 @@ select = [
 "scripts/**/*.py" = ["T"]
 "main.py" = ["T"]
 "keyutils_py/__main__.py" = ["T"]
+"pkix-devtools/src/pkix_devtools/*.py" = ["T"]  # command-line tools print their result
 
 [lint.isort]
 known-first-party = ["src"]

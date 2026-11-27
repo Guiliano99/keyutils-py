@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pkix-devtools"
+version = "0.1.0"
+description = "Development tools shared by keyutils-py, pkixutils and the PKIX test suites"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+# Only validate-sbom needs it.
+sbom = ["cyclonedx-python-lib[validation]==11.12.0"]
+
+[project.scripts]
+add-licenses = "pkix_devtools.add_licenses:main"
+check-config = "pkix_devtools.check_config:main"
+check-import-boundaries = "pkix_devtools.check_import_boundaries:main"
+check-pins = "pkix_devtools.check_pins:main"
+extract-requirements = "pkix_devtools.extract_requirements:main"
+release-metadata = "pkix_devtools.release_metadata:main"
+traceability = "pkix_devtools.traceability:main"
+validate-sbom = "pkix_devtools.validate_sbom:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pkix_devtools = ["canonical/*"]

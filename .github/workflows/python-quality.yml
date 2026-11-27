@@ -1,0 +1,392 @@
+# SPDX-FileCopyrightText: Copyright 2026
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reusable: the quality checks of a Python repository of the PKIX family (keyutils-py, pkixutils, the test suites).
+# A caller passes the same ref twice, in `uses:` and as `devtools-ref`:
+#
+#   jobs:
+#     quality:
+#       uses: Guiliano99/keyutils-py/.github/workflows/python-quality.yml@<ref>
+#       with:
+#         devtools-ref: <ref>
+#         kind: suite
+#         pylint-paths: resources mock_ca scripts
+#         robot: true
+#         robot-test-command: make test-mock-ci
+#         robot-results: reports/mock
+#       secrets:
+#         PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+#         PKIXCA_DEPLOY_KEY: ${{ secrets.PKIXCA_DEPLOY_KEY }}  # only a caller that depends on pkixca
+#
+# The repository provides a uv project with a lock, a Makefile whose targets default to `.venv/bin/python`, and the
+# linters in its dev dependencies. pkix-devtools comes from keyutils-py at `devtools-ref`, beside the venv.
+name: Python quality (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      devtools-ref:
+        description: "The ref of keyutils-py to install pkix-devtools from, the one in `uses:`"
+        type: string
+        required: true
+      kind:
+        description: "`suite` or `library`, for check-pins"
+        type: string
+        required: true
+      python-version:
+        type: string
+        default: "3.13"
+      runner:
+        type: string
+        default: ubuntu-24.04
+      install-command:
+        description: "Creates .venv from the lock"
+        type: string
+        default: uv sync --all-extras --frozen
+      allow-commit-pins:
+        description: "Accept shared packages pinned to a commit (until they have tags)"
+        type: boolean
+        default: false
+      import-boundaries:
+        description: "Run check-import-boundaries ([tool.pkix-devtools.import-boundaries] in pyproject.toml)"
+        type: boolean
+        default: false
+      pylint-paths:
+        description: "The paths pylint checks; empty skips pylint"
+        type: string
+        default: ""
+      pylint-fail-under:
+        type: string
+        default: "9.4"
+      unit-test-command:
+        type: string
+        default: make unittest
+      type-check-blocking:
+        description: "Fail the run when pyright fails; otherwise pyright is informational"
+        type: boolean
+        default: false
+      sbom-command:
+        description: "Generates and validates the SBOM at build/sbom/bom.cyclonedx.json; empty skips the SBOM"
+        type: string
+        default: ""
+      robot:
+        description: "Run the Robot Framework jobs: robocop, dry run, traceability, and robot-test-command"
+        type: boolean
+        default: false
+      robot-dryrun-command:
+        type: string
+        default: make dryrun
+      robot-traceability-command:
+        description: "Empty skips the traceability check"
+        type: string
+        default: make traceability
+      robot-test-command:
+        description: "Runs the suites against the reference implementation; empty skips it"
+        type: string
+        default: ""
+      robot-results:
+        description: "The directory of the Robot Framework results to upload"
+        type: string
+        default: reports
+    secrets:
+      PKIXUTILS_DEPLOY_KEY:
+        description: "Read-only deploy key of the private pkixutils-py repository, while it is private"
+        required: false
+      PKIXCA_DEPLOY_KEY:
+        description: "Read-only deploy key of the private pkixca-py repository, for a caller that depends on it"
+        required: false
+
+env:
+  VENV_DIR: ".venv"
+
+jobs:
+  # Build and cache the virtualenv once.
+  setup_env:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      cache-key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Refuse a deploy key in a public repository
+        # A pull request from a fork can restore the cached venv, which holds the code of the private packages.
+        if: ${{ !github.event.repository.private }}
+        env:
+          DEPLOY_KEYS: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}${{ secrets.PKIXCA_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEYS" ]; then exit 0; fi
+          echo "::error::A public repository must not cache private packages. Publish them or remove the deploy keys."
+          exit 1
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Compute cache key
+        id: key
+        run: |
+          echo "key=${{ runner.os }}-py${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'uv.lock') }}" >> "$GITHUB_OUTPUT"
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ steps.key.outputs.key }}
+      - name: Let git read the private repositories
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        env:
+          PKIXUTILS_DEPLOY_KEY: ${{ secrets.PKIXUTILS_DEPLOY_KEY }}
+          PKIXCA_DEPLOY_KEY: ${{ secrets.PKIXCA_DEPLOY_KEY }}
+        run: |
+          umask 077
+          # GitHub takes the repository from the key, so each repository gets an ssh host of its own with its own key.
+          read_with_key() {
+            if [ -z "$2" ]; then echo "No deploy key given; $1 is read over HTTPS."; return; fi
+            install -m 700 -d ~/.ssh
+            printf '%s\n' "$2" > ~/.ssh/"deploy-$1"
+            printf 'Host github-%s\n  HostName github.com\n  IdentityFile %s\n  IdentitiesOnly yes\n' \
+              "$1" "$HOME/.ssh/deploy-$1" >> ~/.ssh/config
+            ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+            git config --global url."git@github-$1:Guiliano99/$1.git".insteadOf "https://github.com/Guiliano99/$1.git"
+          }
+          read_with_key pkixutils-py "$PKIXUTILS_DEPLOY_KEY"
+          read_with_key pkixca-py "$PKIXCA_DEPLOY_KEY"
+      - name: Create venv (if cache miss)
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          pip install --upgrade uv
+          ${{ inputs.install-command }}
+          uv pip install --python "$VENV_DIR" uv
+      - name: Remove the deploy keys
+        if: always()
+        run: rm -f ~/.ssh/deploy-*
+
+  # The fast checks, each run even when one before it fails.
+  checks:
+    needs: setup_env
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Install pkix-devtools
+        run: |
+          python -m venv "$RUNNER_TEMP/devtools"
+          "$RUNNER_TEMP/devtools/bin/pip" install --quiet \
+            "pkix-devtools @ git+https://github.com/Guiliano99/keyutils-py.git@${{ inputs.devtools-ref }}#subdirectory=pkix-devtools"
+          echo "$RUNNER_TEMP/devtools/bin" >> "$GITHUB_PATH"
+      - name: Ruff
+        if: ${{ !cancelled() }}
+        run: |
+          "$VENV_DIR/bin/ruff" check
+      - name: REUSE
+        if: ${{ !cancelled() }}
+        run: |
+          "$VENV_DIR/bin/reuse" lint
+      - name: Codespell
+        if: ${{ !cancelled() }}
+        run: |
+          "$VENV_DIR/bin/codespell" .
+      - name: The version has a CHANGELOG entry
+        if: ${{ !cancelled() }}
+        run: release-metadata resolve-version --github-output /dev/null
+      - name: Shared config files
+        if: ${{ !cancelled() }}
+        run: check-config
+      - name: Pins of the shared packages
+        if: ${{ !cancelled() }}
+        run: check-pins --kind ${{ inputs.kind }} ${{ inputs.allow-commit-pins && '--allow-commit-pins' || '' }}
+      - name: Import boundaries
+        if: ${{ !cancelled() && inputs.import-boundaries }}
+        run: check-import-boundaries
+
+  dependency_check:
+    # Whether newer versions of the dependencies exist. Informational only.
+    needs: setup_env
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Check for outdated dependencies
+        run: |
+          OUTDATED=$("$VENV_DIR/bin/uv" tree --outdated --depth 1)
+          if echo "$OUTDATED" | grep -q 'latest:'; then
+            echo "Outdated packages detected, think about it:"
+            echo "$OUTDATED"
+            exit 1
+          fi
+          echo "All packages are up to date!"
+
+  pylint:
+    if: inputs.pylint-paths != ''
+    needs: [setup_env, checks]
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Pylint
+        run: |
+          "$VENV_DIR/bin/pylint" --fail-under=${{ inputs.pylint-fail-under }} ${{ inputs.pylint-paths }}
+
+  unit_test:
+    needs: [setup_env, checks]
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Unit tests
+        run: ${{ inputs.unit-test-command }}
+
+  type_check:
+    needs: setup_env
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: ${{ !inputs.type-check-blocking }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Pyright
+        run: |
+          "$VENV_DIR/bin/pyright"
+
+  sbom:
+    if: inputs.sbom-command != ''
+    needs: setup_env
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Generate and validate the CycloneDX SBOM
+        run: ${{ inputs.sbom-command }}
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: cyclonedx-sbom
+          path: build/sbom/bom.cyclonedx.json
+
+  rf_style_check:
+    if: inputs.robot
+    needs: setup_env
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Robocop
+        run: |
+          "$VENV_DIR/bin/robocop" check
+
+  rf_dry_run:
+    # Finds unknown keywords and wrong arguments without a system under test.
+    if: inputs.robot
+    needs: [setup_env, checks]
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Robot Framework dry run
+        run: ${{ inputs.robot-dryrun-command }}
+
+  traceability:
+    # Tests, requirement items and RFC texts must agree. Downloads the pinned RFC texts from the RFC Editor.
+    if: inputs.robot && inputs.robot-traceability-command != ''
+    needs: [setup_env, checks]
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Traceability
+        run: ${{ inputs.robot-traceability-command }}
+
+  rf_test:
+    # The suites against the reference implementation. No test may fail.
+    if: inputs.robot && inputs.robot-test-command != ''
+    needs: [setup_env, checks]
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Restore virtualenv
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VENV_DIR }}
+          key: ${{ needs.setup_env.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Robot Framework against the reference implementation
+        run: ${{ inputs.robot-test-command }}
+      - name: Upload the Robot Framework results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: robot-results
+          path: ${{ inputs.robot-results }}
