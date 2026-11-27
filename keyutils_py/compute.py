@@ -415,8 +415,7 @@ def _check_eddsa_oid_matches_key(oid: univ.ObjectIdentifier, key: Any) -> None:
     expected = rfc9481.id_Ed25519 if is_ed25519 else rfc9481.id_Ed448
     if oid != expected:
         raise BadSigAlgID(
-            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the "
-            f"{type(key).__name__} EdDSA key."
+            f"AlgorithmIdentifier {may_return_oid_to_name(oid)} does not match the {type(key).__name__} EdDSA key."
         )
 
 
