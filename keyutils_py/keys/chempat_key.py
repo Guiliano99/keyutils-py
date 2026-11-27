@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import x25519
 from pyasn1.type import univ
 
-from keyutils_py.exceptions import InvalidKeyCombination
+from keyutils_py.exceptions import InvalidKeyCombination, InvalidKeyData
 from keyutils_py.factories.pq_factory import PQKeyFactory
 from keyutils_py.keys.abstract_pq import PQKEMPrivateKey, PQKEMPublicKey
 from keyutils_py.keys.abstract_wrapper_keys import (
@@ -34,7 +34,7 @@ from keyutils_py.keys.kem_keys import (
     Sntrup761PublicKey,
 )
 from keyutils_py.keys.trad_kem_keys import DHKEMPrivateKey, DHKEMPublicKey
-from keyutils_py.oids import CHEMPAT_NAME_2_OID
+from keyutils_py.oids import CHEMPAT_NAME_2_OID, get_curve_instance
 from keyutils_py.types import ECDHPrivateKey, ECDHPublicKey
 
 CURVE_NAME_2_CONTEXT_NAME = {
@@ -81,19 +81,41 @@ class ChempatPublicKey(AbstractHybridRawPublicKey):
         self._pq_key = pq_key
         self._trad_key = DHKEMPublicKey(trad_key, use_rfc9180=True)
 
+    @staticmethod
+    def _trad_public_length(trad_name: str) -> int:
+        """Return the encoded public-key length of the traditional half (matches ``DHKEMPublicKey.encode``)."""
+        if trad_name == "x25519":
+            return 32
+        if trad_name == "x448":
+            return 56
+        curve = get_curve_instance(trad_name.replace("ecdh-", "", 1))
+        return 2 * ((curve.key_size + 7) // 8) + 1  # X9.62 uncompressed: 0x04 || X || Y
+
     @classmethod
     def from_public_bytes(cls, data: bytes, name: str) -> "ChempatPublicKey":
         """Build a Chempat public key from its raw byte encoding.
 
-        :param data: Concatenated PQ + traditional public-key bytes.
+        :param data: Concatenated ``pk_T || pk_PQ`` bytes, as written by
+            :meth:`public_bytes_raw` (draft-josefsson-chempat Section 10).
         :param name: Canonical Chempat combination name (e.g.
             ``chempat-ml-kem-768-x25519``); used to choose the concrete subclass.
+        :raises InvalidKeyData: If ``data`` is shorter than the traditional half or has
+            trailing bytes after the PQ half.
         """
-        pq_key, rest = PQKeyFactory.from_public_bytes(name=name, data=data, allow_rest=True)  # type: ignore
+        tmp_name = name.lower().replace("chempat-", "", 1)
+        pq_name = PQKeyFactory.get_pq_alg_name(tmp_name)
+        trad_name = tmp_name.replace(f"{pq_name}-", "", 1)
+        trad_len = cls._trad_public_length(trad_name)
+        if len(data) <= trad_len:
+            raise InvalidKeyData(
+                f"Chempat public key is too short: {len(data)} bytes, traditional half alone is {trad_len}."
+            )
+
+        trad_key = DHKEMPublicKey.from_public_bytes(name=trad_name, data=data[:trad_len])
+        pq_key, rest = PQKeyFactory.from_public_bytes(name=name, data=data[trad_len:], allow_rest=True)  # type: ignore
         pq_key: PQKEMPublicKey
-        trad_name = name.replace("chempat-", "", 1)
-        trad_name = trad_name.replace(f"{pq_key.name}-", "", 1)
-        trad_key = DHKEMPublicKey.from_public_bytes(name=trad_name, data=rest)
+        if rest:
+            raise InvalidKeyData(f"Chempat public key has {len(rest)} trailing bytes after the PQ half.")
 
         if "ml-kem" in name:
             key = ChempatMLKEMPublicKey(pq_key, trad_key)
@@ -141,9 +163,11 @@ class ChempatPublicKey(AbstractHybridRawPublicKey):
         elif isinstance(pq_key, (MLKEMPrivateKey, MLKEMPublicKey)):
             pq_name = pq_key.name.upper()
         elif isinstance(pq_key, (FrodoKEMPrivateKey, FrodoKEMPublicKey)):
+            # The PRG suffix is part of the parameter-set name (draft-longa-cfrg-frodokem
+            # Section 9); dropping it would give AES and SHAKE the same context string,
+            # and their key/ciphertext sizes are identical.
             pq_name = pq_key.name.replace("frodokem", "FrodoKEM")
-            pq_name = pq_name.replace("-aes", "")
-            pq_name = pq_name.replace("-shake", "")
+            pq_name = pq_name.replace("-aes", "-AES").replace("-shake", "-SHAKE")
         else:
             raise InvalidKeyCombination(f"Unsupported post-quantum key type for Chempat.: {pq_key.name}")
 
@@ -166,7 +190,9 @@ class ChempatPublicKey(AbstractHybridRawPublicKey):
         context: bytes,
     ) -> bytes:
         """Combine shared secrets per Chempat specification."""
-        hybrid_pk = pq_pub_key + trad_pub_key
+        # H(concat(pk_T, pk_PQ)) and H(concat(ct_T, ct_PQ)) - traditional half first
+        # in both, per draft-josefsson-chempat Section 10.
+        hybrid_pk = trad_pub_key + pq_pub_key
         hybrid_ct = trad_ct + pq_ct
 
         h_hybrid_ct = ChempatPublicKey._hash_sha3_256(hybrid_ct)
@@ -192,8 +218,8 @@ class ChempatPublicKey(AbstractHybridRawPublicKey):
         return ss, b"".join([trad_ct, pq_ct])
 
     def public_bytes_raw(self) -> bytes:
-        """Return the concatenated raw PQ and DHKEM public-key bytes."""
-        return self._pq_key.public_bytes_raw() + self._trad_key.encode()
+        """Return ``pk_T || pk_PQ`` per draft-josefsson-chempat Section 10."""
+        return self._trad_key.encode() + self._pq_key.public_bytes_raw()
 
 
 class ChempatPrivateKey(AbstractHybridRawPrivateKey):

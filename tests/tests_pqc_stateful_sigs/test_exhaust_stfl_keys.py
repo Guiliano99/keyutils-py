@@ -11,8 +11,7 @@ import os
 import unittest
 
 from keyutils_py.keys.stateful_sig_keys import XMSSMTPrivateKey, XMSSPrivateKey, HSSPrivateKey
-from keyutils_py import load_private_key_from_file
-from keyutils_py.keyutils import modify_pq_stateful_sig_private_key
+from keyutils_py import load_private_key_from_file, modify_pq_stateful_sig_private_key
 from keyutils_py.data import HSS_KEYS_DIR
 from tests.test_helpers import get_all_xmss_xmssmt_keys
 

@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keyutils-py"
-version = "0.0.1"
+version = "0.1.0"
 description = "Standalone PQ stateful-hash key library (HSS / LMS / XMSS / XMSSMT)."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -26,8 +26,9 @@ dependencies = [
     "bitstring==5.0.0",
     # Used by compute_ecdh's cofactor-multiplication path.
     "tinyec==0.4.0",
-    # Required for RSASSA-PSS-SHAKE128/256 (cryptography has no SHAKE-as-hash)
-    # and the FixedSHAKE wrappers in data_objects.py.
+    # Required for RSASSA-PSS-SHAKE128/256 (cryptography has no SHAKE-as-hash),
+    # the FixedSHAKE wrappers in data_objects.py, and the DSA wrapper
+    # (see docs/adr/0004-dsa-backed-by-pycryptodome.md).
     "pycryptodome>=4.1.0,<5.0.0",
 ]
 
@@ -66,7 +67,7 @@ exclude = ["tests/"]
 skip = "*keyutils_py/data*,*keyutils_py/fips*,*.pem,*.venv*,*uv.lock,*.egg-info,*.ruff_cache,*.git"
 # `sHat`, `thi` etc. are short mathematical variable identifiers from the FIPS
 # reference implementations and may appear in documentation citing them.
-ignore-words-list = "PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi,disjointness"
+ignore-words-list = "MacRow,PyASN1,ASN1,BitString,OctetString,SequenceOf,SetOf,namedValues,tagSet,HashedASN1,SubjectPublicKeyInfo,AlgorithmIdentifier,CertReq,PKIMessage,PKIMessages,PKIBody,PKIHeader,PKIStatus,certConf,genMsg,genRep,kur,p10cr,caKeyUpdAnn,cAKeyUpdAnn,FrodoKEM,liboqs,pyasn1,LwCMP,sHat,thi,disjointness"
 
 [tool.pylint.main]
 ignore = ["tests"]

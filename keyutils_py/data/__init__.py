@@ -37,6 +37,9 @@ XMSS_XMSSMT_KEYS_VERBOSE_DIR: str = os.path.join(KEYS_DIR, "xmss_xmssmt_keys_ver
 PQ_KEYS_DIR: str = os.path.join(KEYS_DIR, "pq_keys")
 """ML-DSA / ML-KEM / SLH-DSA / FrodoKEM / McEliece / SNTRUP761 PEM fixtures."""
 
+TRAD_KEYS_DIR: str = os.path.join(KEYS_DIR, "trad_keys")
+"""Traditional-key PEM fixtures (DSA, written by ``cryptography`` before its DSA removal)."""
+
 
 __all__ = [
     "DATA_DIR",
@@ -45,4 +48,5 @@ __all__ = [
     "XMSS_XMSSMT_KEYS_DIR",
     "XMSS_XMSSMT_KEYS_VERBOSE_DIR",
     "PQ_KEYS_DIR",
+    "TRAD_KEYS_DIR",
 ]

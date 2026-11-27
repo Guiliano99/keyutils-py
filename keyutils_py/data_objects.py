@@ -21,7 +21,7 @@
   into RSA-PSS with SHAKE.
 """
 
-from typing import Optional
+from typing import Dict, Optional, Type, cast
 
 from Crypto.Hash import SHAKE128, SHAKE256
 from pyasn1.type import constraint, namedtype, tag, univ
@@ -199,8 +199,8 @@ class FixedSHAKE128:
     def digest(self) -> bytes:
         """Return the fixed-length digest."""
         if self._digest is None:
-            self._digest = self._shake.read(self.digest_length)
-        return self._digest
+            self._digest = cast(bytes, self._shake.read(self.digest_length))
+        return cast(bytes, self._digest)
 
     @property
     def digest_size(self) -> int:
@@ -236,8 +236,8 @@ class FixedSHAKE256:
     def digest(self) -> bytes:
         """Return the fixed-length digest."""
         if self._digest is None:
-            self._digest = self._shake.read(self.digest_length)
-        return self._digest
+            self._digest = cast(bytes, self._shake.read(self.digest_length))
+        return cast(bytes, self._digest)
 
     @property
     def digest_size(self) -> int:
@@ -253,7 +253,20 @@ class FixedSHAKE256:
         return cls(data=data)
 
 
+#: ASN.1 ``Choice`` (seed / expandedKey / both) that is the content of the ``privateKey`` field of a
+#: ``OneAsymmetricKey``, by ML-DSA / ML-KEM algorithm name.
+ML_PRIVATE_KEY_STRUCTURES: Dict[str, Type[univ.Choice]] = {
+    "ml-dsa-44": MLDSA44PrivateKeyASN1,
+    "ml-dsa-65": MLDSA65PrivateKeyASN1,
+    "ml-dsa-87": MLDSA87PrivateKeyASN1,
+    "ml-kem-512": MLKEM512PrivateKeyASN1,
+    "ml-kem-768": MLKEM768PrivateKeyASN1,
+    "ml-kem-1024": MLKEM1024PrivateKeyASN1,
+}
+
+
 __all__ = [
+    "ML_PRIVATE_KEY_STRUCTURES",
     "BothMLDSA44",
     "BothMLDSA65",
     "BothMLDSA87",
