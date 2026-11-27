@@ -28,6 +28,7 @@ from keyutils_py.keys.abstract_pq import (
     PQKEMPrivateKey,
     PQSignaturePrivateKey,
 )
+from keyutils_py.keys.kem_keys import FrodoKEMPrivateKey
 
 
 class TestPQSignatureRoundTrip(unittest.TestCase):
@@ -92,6 +93,7 @@ class TestPQKEMRoundTrip(unittest.TestCase):
         ss_b = loaded.decaps(ct)
         self.assertEqual(ss_a, ss_b)
 
+    @unittest.skipUnless(OQS_AVAILABLE, "generate_key needs liboqs for FrodoKEM")
     def test_frodokem_976_shake_save_load_roundtrip(self):
         """GIVEN FrodoKEM-976-SHAKE / WHEN save (PKCS8) + load by OID / THEN name+decaps match."""
         key = generate_key("frodokem-976-shake")
@@ -104,6 +106,7 @@ class TestPQKEMRoundTrip(unittest.TestCase):
         ss_b = loaded.decaps(ct)
         self.assertEqual(ss_a, ss_b)
 
+    @unittest.skipUnless(OQS_AVAILABLE, "generate_key needs liboqs for FrodoKEM")
     def test_frodokem_1344_aes_save_load_roundtrip(self):
         """GIVEN FrodoKEM-1344-AES / WHEN save (PKCS8) + load by OID / THEN name+decaps match."""
         key = generate_key("frodokem-1344-aes")
@@ -117,9 +120,13 @@ class TestPQKEMRoundTrip(unittest.TestCase):
         self.assertEqual(ss_a, ss_b)
 
     def test_frodokem_640_is_unsupported(self):
-        """GIVEN FrodoKEM-640 (no OID in the ISO 18033-2 arc) / WHEN generated / THEN it is rejected."""
+        """GIVEN FrodoKEM-640 (no OID in the ISO 18033-2 arc) / WHEN a key is created / THEN it is rejected.
+
+        The key class is used directly, because ``generate_key`` refuses every FrodoKEM name without liboqs
+        before it looks at the name.
+        """
         with self.assertRaises(ValueError):
-            generate_key("frodokem-640-aes")
+            FrodoKEMPrivateKey(alg_name="frodokem-640-aes")
 
 
 class TestFrodoKEMOIDTable(unittest.TestCase):
