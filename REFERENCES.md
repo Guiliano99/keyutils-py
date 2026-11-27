@@ -10,7 +10,7 @@
 
 ### FrodoKEM
 
-- [draft-smyslov-lamps-frodokem-certificates-03](https://www.ietf.org/archive/id/draft-smyslov-lamps-frodokem-certificates-03.txt) — Internet X.509 Public Key Infrastructure - Algorithm Identifiers for FrodoKEM
+- [draft-ietf-lamps-frodokem-certificates-00](https://www.ietf.org/archive/id/draft-ietf-lamps-frodokem-certificates-00.txt) — Internet X.509 Public Key Infrastructure - Algorithm Identifiers for FrodoKEM
 - [draft-song-lamps-pq-composite-frodokem-00](https://www.ietf.org/archive/id/draft-song-lamps-pq-composite-frodokem-00.txt) — Composite FrodoKEM for use in X.509 Public Key Infrastructure (OIDs currently TBD; not yet mapped in ``keyutils_py/oids.py``)
 
 
