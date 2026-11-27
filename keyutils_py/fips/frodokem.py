@@ -291,7 +291,7 @@ class FrodoKEM(object):
         """Convert a byte array in little-endian format to a little-endian bit
         array
         """
-        b = bitstring.BitArray.from_zeros(8 * len(B))
+        b = bitstring.BitArray(bin="0" * (8 * len(B)))
         for i in range(len(B)):
             for l in range(8):
                 b.set((B[i] >> l) % 2, 8 * i + l)
@@ -357,7 +357,7 @@ class FrodoKEM(object):
         """Decode a mod-q integer matrix into a bitstring (represented in Python
         as a bytes object) (FrodoKEM specification, Algorithm 2)
         """
-        k = bitstring.BitArray.from_zeros(self.B * self.mbar * self.nbar)
+        k = bitstring.BitArray(bin="0" * (self.B * self.mbar * self.nbar))
         # 1. for i = 0; i < mbar; i += 1
         for i in range(self.mbar):
             # 2. for j = 0; j < nbar; j += 1
@@ -391,7 +391,7 @@ class FrodoKEM(object):
         """
         n1 = len(C)
         n2 = len(C[0])
-        b = bitstring.BitArray.from_zeros(self.D * n1 * n2)
+        b = bitstring.BitArray(bin="0" * (self.D * n1 * n2))
         # 1. for i = 0; i < n1; i += 1
         for i in range(n1):
             # for j = 0; j < n2; j += 1
