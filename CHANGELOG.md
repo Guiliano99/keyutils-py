@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0 -->
 ## Changed
 
 - FrodoKEM algorithm identifiers now follow
-  [draft-smyslov-lamps-frodokem-certificates-03](https://www.ietf.org/archive/id/draft-smyslov-lamps-frodokem-certificates-03.txt)
+  [draft-ietf-lamps-frodokem-certificates-00](https://www.ietf.org/archive/id/draft-ietf-lamps-frodokem-certificates-00.txt)
   (ISO/IEC 18033-2 KEM arc `1.0.18033.2.2.7`) instead of the former ad-hoc
   test-suite arc. The old FrodoKEM OIDs are no longer recognised.
 
@@ -41,7 +41,7 @@ no OID, so they cannot be used in X.509 / PKIX structures:
 
 ## Not supported
 
-- The eFrodoKEM-976/1344 variants: draft -03 assigns them OIDs (`.3`, `.4`,
+- The eFrodoKEM-976/1344 variants: the draft assigns them OIDs (`.3`, `.4`,
   `.7`, `.8`), but they are not relevant for certificates and neither `liboqs`
   nor the bundled implementation provides them.
 
